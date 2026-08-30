@@ -1,0 +1,38 @@
+# Patches para el binario de Splatterhouse Xbox 360
+# Se aplican en tiempo de recompilación o en runtime via patcher.
+# Formato compatible con XenonRecomp patch system / o tu propio patcher en ppc/
+
+# ── Ejemplo: Skip intros / logos ───────────────────────────────────────
+# [[patch]]
+# name = "Skip Namco Logo"
+# addr = 0x8234ABCD
+# orig = "48 00 00 00" # bl
+# patch = "60 00 00 00" # nop
+# desc = "Evita espera de 5s en logo"
+
+# ── Ejemplo: Desbloquear FPS (si el juego hace cap a 30) ──────────────
+# Splatterhouse 2010 en 360 va a 30 fps con drops. UE3 suele tener:
+#   GEngine->bSmoothFrameRate / Min/MaxSmoothedFrameRate
+# Busca conIDA: `MaxSmoothedFrameRate` string refs.
+# [[patch]]
+# name = "Unlock FPS"
+# addr = 0x82XXXXXX
+# patch = "..."
+
+# ── Ejemplo: Resolución interna (si es configurable via cvar UE3) ──────
+# UE3 cvars: ResX, ResY, bAllowD3D9MSAA
+# Se pueden parchear defaults en .data
+
+# ── Patches de compatibilidad HLE ─────────────────────────────────────
+# [[patch]]
+# name = "Disable XamUserReadProfileSettings stub crash"
+# addr = 0x82XXXXXX
+# patch = "38 60 00 00 4E 80 00 20" # li r3,0; blr (retorna éxito)
+
+# ── Notas Splatterhouse específicas ───────────────────────────────────
+# - Usa Unreal Engine 3 (Build ~ 2009-2010, similar a Batman Arkham Asylum)
+# - Usa Scaleform GFx para UI
+# - Usa Bink para cinemáticas (reemplazar con HLE o ffmpeg)
+# - Audio: XAudio2 + XMA
+# - Input: XInput
+# - Save: XContent / STFS

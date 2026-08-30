@@ -1,0 +1,12 @@
+{
+  "name": "splatterhouse-recompiled",
+  "version": "0.1.0",
+  "description": "Splatterhouse 2010 Xbox 360 static recompilation port",
+  "builtin-baseline": "2025-06-13",
+  "dependencies": [
+    "sdl3",
+    "spdlog",
+    "tomlplusplus",
+    "imgui"
+  ]
+}

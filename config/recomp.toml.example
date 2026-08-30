@@ -1,0 +1,63 @@
+# Splatterhouse (2010) - Xbox 360 - XenonRecomp config
+# Copia a config/recomp.toml y ajusta rutas.
+# Documentación: https://github.com/hedge-dev/XenonRecomp#xenonrecomp
+# Uso: XenonRecomp config/recomp.toml extern/XenonRecomp/XenonUtils/ppc_context.h
+
+[main]
+# XEX desencriptado. Extrae ISO con exiso/xiso, luego: xextool -r -c default.xex -> default.dec.xex
+file_path = "../game/default.dec.xex"
+# Opcional: patch XEXP (title update) si tienes
+# patch_file_path = "../game/default.xexp"
+# patched_file_path = "../game/default_patched.xex"
+# Carpeta de salida para el código C++ recompilado (debe existir antes)
+out_directory_path = "../recompiled"
+# Opcional: jump tables detectadas con XenonAnalyse
+# switch_table_file_path = "switch_tables.toml"
+
+# ── Optimizaciones (recomendado dejar todo false hasta que funcione) ──
+# Ver README de XenonRecomp para detalles
+skip_lr = false
+skip_msr = false
+ctr_as_local = false
+xer_as_local = false
+reserved_as_local = false
+cr_as_local = false
+non_argument_as_local = false
+non_volatile_as_local = false
+
+# ── Register restore/save (busca los bytes pattern en el XEX con IDA) ──
+# Estos son EJEMPLOS de Unleashed Recompiled, debes encontrar los de Splatterhouse
+# Patrones:
+#   restgprlr_14: e9 c1 ff 68   (ld r14, -0x98(r1) ...)
+#   savegprlr_14: f9 c1 ff 68   (std r14, -0x98(r1) ...)
+#   restfpr_14:   c9 cc ff 70   (lfd f14, -0x90(r12) ...)
+#   savefpr_14:   d9 cc ff 70   (stfd f14, -0x90(r12) ...)
+# Usa: rg -a "e9 c1 ff 68" -n  o busca en Ghidra/IDA
+# restgprlr_14_address = 0x0
+# savegprlr_14_address = 0x0
+# restfpr_14_address = 0x0
+# savefpr_14_address = 0x0
+# restvmx_14_address = 0x0
+# savevmx_14_address = 0x0
+# restvmx_64_address = 0x0
+# savevmx_64_address = 0x0
+
+# ── setjmp/longjmp (si el juego los usa) ──
+# longjmp_address = 0x0
+# setjmp_address = 0x0
+
+# ── Funciones explícitas (si XenonAnalyse falla) ──
+# functions = [
+#     { address = 0x82001234, size = 0x98 },
+# ]
+
+# ── Saltar instrucciones inválidas (datos entre funciones) ──
+# invalid_instructions = [
+#     { data = 0x00000000, size = 4 },
+# ]
+
+# ── Mid-asm hooks (inserta calls en direcciones concretas) ──
+# [[midasm_hook]]
+# name = "MyHook"
+# address = 0x82001234
+# registers = ["r3", "r4"]

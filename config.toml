@@ -1,0 +1,18 @@
+# Splatterhouse Recompiled - Config
+logLevel = 1 # 0 trace 1 debug 2 info 3 warn 4 error 5 off
+
+[window]
+width = 1280
+height = 720
+fullscreen = false
+vsync = true
+maxFps = 0 # 0 = ilimitado
+
+[audio]
+enable = true
+sampleRate = 48000
+
+[game]
+root = "game"
+devMode = false
+skipIntro = false

@@ -1,0 +1,53 @@
+# Build
+build/
+out/
+cmake-build-*/
+_Recompiled/
+recompiled/*.cpp
+recompiled/*.h
+recompiled/*.o
+
+# Binaries
+*.exe
+*.dll
+*.pdb
+*.lib
+*.a
+*.so
+*.dylib
+
+# XEX / Game dump - NUNCA commitear
+*.xex
+*.xexp
+game/
+dump/
+XEX/
+default.xex
+*.iso
+*.xiso
+
+# IDE
+.vs/
+.vscode/settings.json
+.idea/
+*.vcxproj.user
+*.suo
+*.sdf
+CMakeCache.txt
+CMakeFiles/
+
+# vcpkg
+vcpkg_installed/
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Temp
+*.tmp
+*.temp

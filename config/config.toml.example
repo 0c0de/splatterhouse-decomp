@@ -1,0 +1,18 @@
+# Copia a config.toml junto al exe (o al root del proyecto en Debug)
+logLevel = 2 # 0 trace 1 debug 2 info 3 warn 4 error 5 off
+
+[window]
+width = 1280
+height = 720
+fullscreen = false
+vsync = true
+maxFps = 0 # 0 = ilimitado (deja al juego decidir). Pon 60/120 para cap.
+
+[audio]
+enable = true
+sampleRate = 48000
+
+[game]
+root = "game" # carpeta con el dump del disco (default.xex + Data/)
+devMode = false
+skipIntro = false
