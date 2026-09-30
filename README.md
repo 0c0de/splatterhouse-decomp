@@ -1,98 +1,170 @@
-# Splatterhouse Recompiled — Xbox 360 Static Recompilation Port
+# Splatterhouse Recompiled — Port nativo de Xbox 360 a PC
 
-Port nativo para PC de **Splatterhouse (2010)** versión Xbox 360 mediante **recompilación estática** con la [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk).
+Port nativo para PC de **Splatterhouse (2010)** (versión Xbox 360, title id `4E4D07F0`) mediante **recompilación estática** con [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk). El código del juego se traduce a C++ nativo que se compila para tu PC: **no es un emulador**, no hay interpretación en runtime y corre a velocidad nativa (60 FPS).
 
-> Inspirado en proyectos como `Sonic Unleashed Recompiled` y `Ninja Gaiden 2 Black Recompiled`.
-> No contiene código ni assets del juego. Necesitas tu propia copia (disco/ISO) para generar el port.
+> Inspirado en `Sonic Unleashed Recompiled`, `Ninja Gaiden 2 Black Recompiled` y `Silent Hill: Downpour Recompiled`.
+> **No contiene código ni assets del juego.** Necesitas tu propia copia (disco/ISO).
+
+---
 
 ## Estado
 
-`v0.2.0 — ReXGlue Migration` — Migrada la toolchain desde XenonRecomp a ReXGlue.
+**Jugable.** Arranca, se navega por los menús y se juega la campaña a **60 FPS** con iluminación correcta, texto localizado y audio en inglés.
 
-- [x] Scaffolding ReXGlue (`rexglue init`: CMake, ReXApp, manifest)
-- [x] Runtime ReXGlue (memoria guest 4 GB, Xbox360 kernel shims, VFS/STFS, threading)
-- [x] Backends GPU (D3D12/Vulkan), Audio (XMA/SDL), Input (XInput/SDL) del SDK
-- [x] Codegen vía `rexglue codegen` + manifest (`splatterhouse_manifest.toml`)
-- [x] Config codegen portado (`config/codegen.toml`, flags idénticos a los de XenonRecomp)
-- [x] ReXApp bootstrap compilable (sin XEX)
-- [ ] Recompilación real del `default.dec.xex` (requiere Copia propia)
-- [ ] Overrides/patches de juego (60 FPS, resolución, etc.)
+### Funciona
+- **Recompilación estática completas**: 208 ficheros, sin crashes conocidos en gameplay.
+- **GPU (D3D12, ruta ROV)**: escena 3D correcta (ROV reproduce la eDRAM del X360; RTV rompe la iluminación).
+- **60 FPS**: parche oficial de 60 FPS aplicado de forma durable (ver abajo).
+- **FSR (FidelityFX)**: reescalado/AA en el present.
+- **Localización (texto)**: menú del juego traducible a español/francés/italiano/alemán/japonés; audio siempre inglés.
+- **Instalador**: arrastras la ISO y listo.
+- **Caché de shaders precompilada** para evitar tirones.
 
-## Qué cambió respecto a la version XenonRecomp (v0.1.0)
+### Pendiente / limitaciones conocidas
+- **Tirones al compilar shaders** en la primera partida (el juego compila sus materiales y el port los traduce a D3D12). Mitigado con la caché de shaders (`shadercache/`).
+- **Iluminación con RTV**: si pones la ruta `rtv` la escena casi se apaga (limitación de diseño de la ruta RTV; **hay que usar `rov`**). Ver `docs/rov-performance.md`.
+- **Rendimiento de ROV**: la vía de fondo para GPUs modestas es optimizar el *pixel shader* de ROV (el SDK lo deja como TODO: especializar con parámetros de RT estáticos). De momento se compensa con **presets** de resolución + FSR.
+- **Menú de opciones in-game**: pantalla propia con estilo de juego (tecla **F5**), no integrada literalmente en el menú Scaleform del juego (no se puede editar el `.gfx`).
+- **Post-procesado/DoF** un poco excesivo al inicio (probable upscale 720p→ventana).
+- **Distribución**: solo binarios Win x64 (D3D12).
 
-| Antes (XenonRecomp)                    | Ahora (ReXGlue)                                       |
-|----------------------------------------|-------------------------------------------------------|
-| `XenonRecomp config/recomp.toml`       | `rexglue codegen splatterhouse_manifest.toml`         |
-| `XenonUtils` (ppc_context.h, XEX)      | Runtime del SDK (`rex::`), claves config equivalentes |
-| Runtime propio (memoria, threads, HLE) | SDK: `KernelState`, `Memory`, `FunctionDispatcher`    |
-| `src/main.cpp` custom (SDL + glue)     | `ReXApp` (windowing + ImGui + runtime lifecycle)      |
-| HLE stubs propias (`src/os/*`)         | Shims de kernel incluidos (xboxkrnl/xam genéricos)    |
-| GCC/Clang/MSVC cualquiera              | ReXGlue requiere **Clang 18+**                        |
+---
 
-El código del runtime propio quedó en `legacy/` (solo referencia; no compila con el nuevo stack).
+## Cómo se hizo esta decompilación
 
-## Requisitos
+No hay código fuente: se parte del **XEX retail** y se **recompila estáticamente**.
 
-| Herramienta | Versión mínima | Notas |
+1. **Extracción de la ISO** (`tools/extract-xiso.exe`): se obtiene `default.xex` + `data/`.
+2. **Desencriptado del XEX** (`tools/xextool.exe -e u -c b`): genera `default.dec.xex` (solo para el codegen).
+3. **Codegen** (`rexglue codegen splatterhouse_manifest.toml`): ReXGlue analiza el PPC del XEX, descubre funciones y emite **C++ recompilado** (`generated/*.cpp`, ~208 ficheros) + registro de funciones e imagen.
+4. **Runtime** (SDK): memoria guest 4 GB, shims de kernel xboxkrnl/xam, VFS/STFS, threading, GPU (D3D12), audio (XMA/SDL), input.
+5. **Parches locales del SDK** (ver `AGENTS.md`) para corregir bugs de codegen (propagación de registros no-ABI `r0/r2/r11/r12` → arregla `__finally`/`__chkstk`), descubrir funciones por punteros de datos, implementar `vmaxuw`, instrumentar access violations, etc.
+6. **Parches del juego** aplicados de forma durable en `src/` (no en `generated/`):
+   - **60 FPS**: datos (`0x82F8FF58/5C`: 1/15 y 1/30 → **1/60**) y una instrucción (`0x8247A4AC`) replicada con un **override fuerte** de la función weak del codegen.
+   - **Localización**: override de `sub_827B65E0` para forzar el idioma **solo** en la ruta de carga del idioma (texto), dejando el audio en inglés.
+
+El runtime propio antiguo (XenonRecomp) quedó en `legacy/` (solo referencia).
+
+---
+
+## Instalación para el usuario final (PC)
+
+**Requisitos**: Windows 10/11 x64, GPU con **D3D12 + Rasterizer-Ordered Views** (NVIDIA/AMD modernos), y tu copia de Splatterhouse (ISO de Xbox 360).
+
+1. Descarga y descomprime el release (el `.exe`, las DLLs, `install.bat` y `tools/`).
+2. **Arrastra tu ISO de Splatterhouse sobre `install.bat`**.
+   - El script extrae la ISO (`extract-xiso`), la mueve a `assets\`, desencripta el XEX con `xextool` (`assets\default.dec.xex`) y crea un `splatterhouse.toml` por defecto.
+   - Si incluyes una carpeta `shadercache\` en el release, la copia a tu caché de shaders (menos tirones).
+3. Ejecuta **`splatterhouse.exe`** y a jugar.
+
+Sin `splatterhouse.toml` no se carga la GPU (pantalla negra); el instalador lo crea por ti y `SplatterhouseApp::OnPreSetup` fuerza `gpu_plugin="xenos"` como red de seguridad.
+
+---
+
+## Compilar desde el código (desarrolladores)
+
+### Requisitos
+| Herramienta | Versión | Notas |
 |---|---|---|
-| Windows 10/11 o Linux | — | Win recomendado para D3D12 |
-| Clang | 18+ (20.x recomendado) | `winget install LLVM.LLVM` o VS2022 Clang component |
-| CMake | 3.25+ | `winget install Kitware.CMake` |
-| Ninja | 1.11+ | `winget install Ninja-build.Ninja` |
-| Python | 3.10+ | Para `tools/recompile.py` |
-| Git | 2.40+ | Submódulos |
+| Windows 10/11 | — | D3D12 |
+| VS 2022/2026 (Clang) o LLVM | Clang 18+ (probado 22.1.8) | |
+| CMake | 3.25+ | |
+| Ninja | 1.11+ | |
+| Python | 3.9+ | scripts de `tools/` |
+| Git | 2.40+ | submódulos |
 
-Todas las librerias (SDL3, ImGui, fmt, spdlog, GoogleTest…) traen como submódulos internos `extern/rexglue-sdk` (traídos cuando usan `--recursive`).
-
-## Quick Start (Windows)
+### Pasos
 
 ```powershell
-# 1. Setup (instala deps si falta)
-powershell -ExecutionPolicy Bypass -File tools/setup.ps1 -InstallTools
-# o manual:
+# 0) Submódulo del SDK
 git submodule update --init extern/rexglue-sdk
 git -C extern/rexglue-sdk submodule update --init --recursive
 
-# 2. Build bootstrap (sin XEX, valida toolchain)
-cmake --preset win-amd64-release
-cmake --build out/build/win-amd64-release -j
+# 1) Configurar (relwithdebinfo = rinde bien; debug = lento)
+cmake --preset win-amd64-relwithdebinfo
+#    (opcional FSR)  -DREXGLUE_ENABLE_FIDELITYFX=ON
 
-# 3. Obtener el CLI rexglue (dos opciones)
-#    a) Descargar release precompilado: https://github.com/rexglue/rexglue-sdk/releases
-#    b) Compilar e instalar el SDK:
-#       cd extern/rexglue-sdk
-#       cmake --preset win-amd64 && cmake --build out/build/win-amd64 --target install
+# 2) Colocar tu copia del juego (gitignored)
+#    game/default.xex   (retail, tal cual sale de la ISO)
+#    game/default.dec.xex (desencriptado con xextool -e u -c b; para el codegen)
+#    game/data/...      (resto de la ISO)
 
-# 4. Coloca tu copia del juego (extraida del ISO):
-#    game/default.dec.xex        (desencriptado: xextool -r -c default.xex)
-#    game/...                    (resto de datos extraídos)
-
-# 5. Codegen
-python tools/recompile.py --xex game/default.dec.xex
-#    ó directo: rexglue codegen splatterhouse_manifest.toml
-
-# 6. Build con el código guest generado y compilar
-cmake --build out/build/win-amd64-release -j
+# 3) Build (el codegen se ejecuta solo si el stamp está caducado)
+cmake --build out\build\win-amd64-relwithdebinfo --target splatterhouse -j 6
+#    regenerar codegen a mano (~800 s, 208 ficheros):
+#    extern\rexglue-sdk\out\win-amd64\rexglued.exe codegen splatterhouse_manifest.toml --ignore-stamp
 ```
 
-`rexglue codegen` reporta llamadas sin resolver (`UnresolvedCall`): es normal la primera vez. Usa `--force` para generar y refina `config/codegen.toml` (`[functions]`, `[[switch_tables]]`, `[[invalid_instructions]]`, `[[midasm_hook]]`, `[rexcrt]`) iterativamente.
+El exe carga las DLLs desde **su propio directorio**: tras reconstruir `rexruntime` hay que copiar `extern\rexglue-sdk\out\win-amd64\rexruntimerd.dll` (y las demás `*rd.dll`) a `out\build\win-amd64-relwithdebinfo\`.
+
+Con **FSR** (`-DREXGLUE_ENABLE_FIDELITYFX=ON`) se genera además **`amd_fidelityfx_dx12drel.dll`** (en `bin/`), que debe ir junto al exe **y** junto a `rexruntimerd.dll`/`rexglued.exe` o el codegen falla con `0xC0000135`.
+
+---
+
+## Controles y opciones
+
+| Tecla | Acción |
+|---|---|
+| **F3** | Overlay de debug (FPS, stats) |
+| **F4** | Overlay de ajustes del runtime (todas las cvars) |
+| **F5** | **Pantalla de OPCIONES del port** (idioma, preset gráfico, FSR, VSync, límite de FPS…) |
+| **F7** | Logros |
+| **`** (backtick) | Consola |
+
+En la pantalla **F5**: flechas para navegar/cambiar, **S** guarda en `splatterhouse.toml`, Esc/F5 cierra. Las filas con `[reinicio]` requieren reiniciar.
+
+Presets: **Bajo** 960x540 / **Medio** 1280x720 / **Alto** 1600x900 / **Ultra** 1920x1080 (ajustan resolución interna, FSR y caché de texturas).
+
+---
+
+## Configuración (`splatterhouse.toml`, junto al exe)
+
+| cvar | valores | notas |
+|---|---|---|
+| `gpu_plugin` | `xenos` | **obligatorio** (vacío = sin GPU = pantalla negra) |
+| `render_target_path_d3d12` | `rov` | **obligatorio** (`rtv` rompe la iluminación) |
+| `present_effect` | `fsr` (o `bilinear`, `cas`) | reescalado del present |
+| `video_mode_width/height` | p.ej. `1920/1080` | resolución interna del guest (bájala para ganar FPS) |
+| `video_mode_refresh_rate` | `60` | |
+| `vsync` | `true` | |
+| `d3d12_present_frame_limiter[_fps]` | `false` / `30`…`144` | límite de FPS |
+| `sh_language` | `auto`/`spanish`/`english`/… | idioma del **texto** (audio siempre inglés) |
+| `sh_60fps` | `true` | parche de 60 FPS |
+| `log_level` | `warn` / `trace` | |
+
+---
 
 ## Estructura del proyecto
 
 ```
-generated/                  # código recompilado (autogenerado por rexglue codegen)
-  rexglue.cmake             #   integración SDK (regenerada por `rexglue migrate`)
-config/
-  codegen.toml              # flags de codegen + overrides (functions/hooks/rexcrt)
+install.bat                 # instalador (arrastra la ISO)
+assets/                     # datos del juego instalados (gitignored; junction a game/ en dev)
+tools/
+  extract-xiso.exe          # extraer la ISO de Xbox 360
+  xextool.exe               # desencriptar el XEX
+  setup.ps1 / recompile.py  # setup y codegen (utilidades de desarrollo)
+generated/                  # código recompilado (autogenerado; gitignored)
+config/codegen.toml         # flags de codegen + overrides [functions]
 src/
-  main.cpp                  # REX_DEFINE_APP + fallback bootstrap sin XEX
-  splatterhouse_app.h       # rex::ReXApp subclass (hooks OnPreSetup, OnPostSetup...)
-splatterhouse_manifest.toml # manifest: XEX del entrypoint, salida, includes
-extern/rexglue-sdk/         # SDK (submódulo)
-game/                       # TU copia del juego (gitignored)
+  main.cpp                  # REX_DEFINE_APP + cvars (sh_60fps, sh_language, sh_graphics_menu)
+  splatterhouse_app.h       # ReXApp: parches, rutas, menú, XEX
+  sh_60fps_hook.cpp         # parche 60 FPS (instrucción)
+  sh_language_hook.cpp      # localización del texto
+  graphics_menu.h           # pantalla OPCIONES (F5)
+extern/rexglue-sdk/         # SDK (submódulo, con parches locales)
+docs/rov-performance.md     # análisis de rendimiento de ROV
+AGENTS.md                   # bitácora técnica completa (estado, parches, decisiones)
 legacy/                     # runtime XenonRecomp antiguo (referencia)
 ```
 
-## Disclaimer
+---
 
-Este proyecto es con fines educativos. No está afiliado a Microsoft ni a Konami. ReXGlue no está afiliado a Microsoft ni a Xbox. No fomenta la piratería: necesitas tu propia copia del juego.
+## Créditos y aviso legal
+
+- **ReXGlue SDK** — runtime y toolchain de recompilación.
+- **Xenia** — la GPU/eDRAM, formatos y muchas bases del runtime provienen de Xenia.
+- **extract-xiso** (xboxdev) y **XexTool** (xorloser) — herramientas de la ISO/XEX.
+- **Parche de 60 FPS**: de `xenia-canary/game-patches` (autor *illusion*), adaptado al recomp.
+- **FidelityFX / FSR**: AMD.
+
+Este proyecto es con fines **educativos y de preservación**. No está afiliado a Microsoft, Bandai Namco ni Konami, y **no incluye código ni assets del juego**: necesitas tu propia copia legal para usarlo.
