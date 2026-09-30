@@ -1,0 +1,211 @@
+# Splatterhouse (2010) - Xbox 360 - Config de codegen para ReXGlue
+# Referencia: https://github.com/rexglue/rexglue-sdk/wiki/rexglue-CLI-Configuration-File
+#
+# Migrado desde config/recomp.toml (XenonRecomp). Las claves de flags son
+# equivalentes 1:1 en ReXGlue.
+#
+# Uso (vía manifest): rexglue codegen splatterhouse_manifest.toml
+
+# ============================================================
+# Optimizaciones de codegen (port desde XenonRecomp recomp.toml)
+# Activas para evitar el problema de save/restore functions mal
+# recompiladas (fusionadas por fall-through). Con
+# non_volatile_as_local, r14-r31 se convierten en variables
+# locales y el codegen elimina las llamadas a __savegprlr/__restgprlr.
+# ============================================================
+skip_lr = true
+skip_msr = true
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
+non_argument_as_local = true
+non_volatile_as_local = true
+
+# SEH: UE3 usa __try/__except (proteccion de memoria scrubble etc.).
+# Sin esto, las excepciones del guest llegan como access violation del host.
+generate_exception_handlers = true
+
+# ============================================================
+# Nota de migracion (XenonRecomp -> ReXGlue)
+# XenonRecomp usaba claves explícitas para las funciones de
+# save/restore de registros detectadas con tools/find_restores.py:
+#   restgprlr_14_address  = 0x829B0610
+#   savegprlr_14_address  = 0x829B05C0
+#   restfpr_14_address    = 0x829B13BC
+#   savefpr_14_address    = 0x829B1370
+#   restvmx_14_address    = 0x829B1FD8
+#   savevmx_14_address    = 0x829B1D40
+#   restvmx_64_address    = 0x829B206C
+#   savevmx_64_address    = 0x829B1DD4
+# ReXGlue no tiene esas claves: el analisis detecta las funciones
+# __savegprlr/__restgprlr/__savefpr/__restfpr/__savevmx/__restvmx
+# automaticamente. No es necesario configurar nada aqui.
+#
+# setjmp/longjmp (descomentar si el juego los usa):
+#   setjmp_address  = 0x82000000
+#   longjmp_address = 0x82000100
+# ============================================================
+
+# ============================================================
+# Overrides manuales (rellenar durante el analisis con IDA/x64dbg)
+# ============================================================
+
+# Funciones explicitas (bordes que el analisis no detecta bien):
+[functions]
+0x824BEF00 = { }
+0x82B78A00 = { }
+0x82F50668 = { }
+0x82F50600 = { }
+0x82F4FF20 = { }
+0x82F4BDF0 = { }
+0x82F49DF8 = { }
+0x82F45470 = { }
+0x82F3C438 = { }
+0x82F371C0 = { }
+0x82F371A8 = { }
+0x82F328A0 = { }
+0x82F319D8 = { }
+0x82F318E8 = { }
+0x82F302D0 = { }
+0x82F302B8 = { }
+0x82F30280 = { }
+0x82F30248 = { }
+0x82F30230 = { }
+0x82F2E670 = { }
+0x82F2DDE0 = { }
+0x82F2DDC8 = { }
+0x82F2DD90 = { }
+0x82F2DCD8 = { }
+0x82F2DC80 = { }
+0x82F2DC68 = { }
+0x82F2DBF0 = { }
+0x82F2DB58 = { }
+0x82F2DA00 = { }
+0x82F2D810 = { }
+0x82F2D5E8 = { }
+0x82F2D580 = { }
+# UnresolvedCall detectada: tail call 'b 0x8257AA90' desde 0x824AD120.
+# Borde auto-detectado desde esa direccion; ajusta size si el analisis falla.
+0x8257AA90 = {}
+# boton runtime: 'Call to invalid or unregistered function at 0x82F2D000'.
+# Indirect call / vtable a una funcion que el Discover no detecto entre
+# sub_82F2CFE8 y sub_82F2D028.
+0x82F2D000 = {}
+# mismo patron: llamada indirecta a 0x82F2D0F8
+0x82F2D0F8 = {}
+0x82F2D440 = {}
+# boton runtime (fix CS r12): 'Call to invalid or unregistered function at
+# 0x822D4110'. Funcion alcanzada solo por llamada indirecta, en el hueco entre
+# sub_822D4090 y sub_822D4124.
+0x822D4110 = {}
+# FATAL tras XamShowDeviceSelectorUI: 'Call to invalid or unregistered function
+# at 0x827D8838'. Thunk 'b 0x827D7B10' (8 bytes, con padding) entre
+# sub_827D8790 y sub_827D8840; referenciado por una tabla de callbacks que el
+# dataPointerScan no alcanzo.
+0x827D8838 = {}
+
+# Jump tables no detectadas:
+# [[switch_tables]]
+# address = 0x82000100
+# register = 11
+# labels = [0x82000200, 0x82000300]
+
+# Datos embebidos que se confunden con codigo:
+# [[invalid_instructions]]
+# data = 0x00000000
+# size = 4
+
+# Hooks a funciones C++ nativas en instructiones concretas:
+# [[midasm_hook]]
+# address = 0x82001234
+# name = "MyHook"
+# registers = ["r3", "r4"]
+
+# Reemplazo de CRT del guest por implementaciones host:
+# [rexcrt]
+# RtlAllocateHeap = "0x82000154"
+# RtlFreeHeap = "0x82000254"
+
+# [scan_missing] Thunks de despacho/reentrada (lwz;lwz;mtctr;bctr o `b tgt; 00000000`)
+# precedidos de terminador, dentro de funciones ya emitidas pero sin entrada propia:
+# el analisis fusiono funciones contiguas y estas entradas quedaban inalcanzables
+# (FATAL `Call to invalid or unregistered function`). Detectados con scan_missing3.py.
+0x82221F28 = {}
+0x82241488 = {}
+0x822D5784 = {}
+0x822E79E8 = {}
+0x822E7A50 = {}
+0x8235B878 = {}
+0x8235B888 = {}
+0x8235BEAC = {}
+0x8235E474 = {}
+0x82360B6C = {}
+0x82395B80 = {}
+0x8239A92C = {}
+0x82464570 = {}
+0x824D4340 = {}
+0x824D4358 = {}
+0x824D9718 = {}
+0x824D9878 = {}
+0x826E2540 = {}
+0x8274C3A8 = {}
+0x82782530 = {}
+0x8279E680 = {}
+0x827AFBE0 = {}
+0x828300D8 = {}
+0x82841708 = {}
+0x82857E40 = {}
+0x8285FCB8 = {}
+0x8286E770 = {}
+0x8288C560 = {}
+0x82899850 = {}
+0x828BD608 = {}
+0x828D6138 = {}
+0x828DB8C0 = {}
+0x82909430 = {}
+0x82917F90 = {}
+0x82992BE0 = {}
+0x829A9768 = {}
+0x829B7800 = {}
+0x829C2CF8 = {}
+0x829D06B8 = {}
+0x829D5DB0 = {}
+0x829E94A0 = {}
+0x82A69C6C = {}
+0x82A7A2B8 = {}
+0x82A7A2C8 = {}
+0x82A7A2D8 = {}
+0x82A7A2E8 = {}
+0x82A7A2F8 = {}
+0x82A7A308 = {}
+0x82A7A318 = {}
+0x82A7A328 = {}
+0x82A7A338 = {}
+0x82A7A348 = {}
+0x82B42F38 = {}
+0x82B780D8 = {}
+0x82B79D88 = {}
+0x82D86950 = {}
+0x82D8E180 = {}
+0x82DC2628 = {}
+0x82E9CE90 = {}
+0x82E9F8A8 = {}
+0x82EE30F8 = {}
+0x82EE3AF0 = {}
+
+
+# Thunk de despacho virtual (lwz;mr;lwz;lwz;mtctr;bctr) alcanzado por tabla
+# de callbacks del UI (FATAL tras cargar journal.gfx/minigameprompts.gfx).
+0x825CB158 = {}
+
+
+
+# Tabla contigua de thunks de despacho virtual (0x825CB108..0x825CB1B8), del
+# callback UI. El analisis la fusiono; el runtime los llama por tabla.
+0x825CB108 = {}
+0x825CB130 = {}
+0x825CB170 = {}
+0x825CB188 = {}
+0x825CB1A0 = {}
+0x825CB1B8 = {}

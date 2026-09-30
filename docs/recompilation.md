@@ -1,36 +1,37 @@
 # Recompilación — Splatterhouse Xbox 360
 
-## Flujo XenonRecomp
+## Flujo ReXGlue
 
 ```
 default.xex (encriptado XEX2)
    |  xextool -r -c
    v
-default.dec.xex (PE PPC desencriptado)
-   |  XenonRecomp (ppc -> C++)
+default.dec.xex (IMAGE PPC desencriptado)
+   |  rexglue codegen splatterhouse_manifest.toml
    v
-recompiled/*.cpp + *.h  (funciones PPC como C++ con contexto)
-   |  + src/os HLE + XenonUtils runtime
+generated/*.cpp + _init.h/.cpp (funciones PPC como C++ con PPCContext)
+   |  + Runtime del SDK (rex::Runtime, KernelState, FunctionDispatcher)
    v
-splatterhouse.exe (x64 nativo)
+splatterhouse.exe (x64 nativo, Clang)
 ```
 
 ## Tipos de código
 
-- **Recompilado puro**: lógica del juego (update, AI, física). Va a `recompiled/`.
-- **HLE**: llamadas al OS/GPU/Audio que el juego hace via imports. Se reimplementan en `src/os/` y `src/gpu|audio|input`.
+- **Recompilado puro**: lógica del juego (update, AI, física). Va a `generated/` (autogenerado, no editar).
+- **Overrides/HLE**: llamadas al kernel se reimplementan como `REX_EXPORT`/`REX_HOOK` (ver wiki Function Overrides). El SDK ya trae shims de xboxkrnl/xam; añade los que falten en `src/`.
+- **Mid-ASM hooks**: parcheo fino por instrucción vía `[[midasm_hook]]` en `config/codegen.toml`.
 
 ## Cómo averiguar qué implementar primero
 
-1. Recompila y compila. Ejecuta con `logLevel=0` (trace).
-2. Mira los primeros `Unimplemented: xam!... / xboxkrnl!... / d3d9!...` en log.
-3. Implementa esos stubs (ver `src/os/hle_*.cpp:RegisterAll()`).
+1. `rexglue codegen splatterhouse_manifest.toml --force` y compila. La primera vez habrá `UnresolvedCall`: lista `config/codegen.toml` con `[functions]`.
+2. Ejecuta y mira los primeros logs del runtime (activa `--log_level trace` / cvar `log_level`).
+3. Implementa los imports que falten con `REX_EXPORT` o stubs `REX_EXPORT_STUB`.
 4. Repite.
 
 Herramientas útiles:
-- `xenia` (referencia de implementación HLE Lee `xenia/kernel/xboxkrnl*`)
+- `xenia` (referencia de implementación; ReXGlue deriva de su runtime)
 - IDA/Ghidra con PPC plugin para ver strings y xrefs de `MaxSmoothedFrameRate`, `ResX`, etc.
-- `tools/recompile.py --dry-run` para validar sin binario.
+- `python tools/recompile.py --dry-run` para validar rutas sin binario.
 
 ## UE3 particularidades (Splatterhouse)
 

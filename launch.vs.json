@@ -1,0 +1,12 @@
+{
+    "version": "0.2.1",
+    "inputs": [
+        {
+            "type": "default",
+            "id": "splatterhouse-launch",
+            "project": "",
+            "name": "splatterhouse",
+            "args": [ "${workspaceFolder}\\game" ]
+        }
+    ]
+}

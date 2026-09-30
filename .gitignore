@@ -2,10 +2,12 @@
 build/
 out/
 cmake-build-*/
-_Recompiled/
-recompiled/*.cpp
-recompiled/*.h
-recompiled/*.o
+_ReCompiled/
+legacy/recompiled/
+
+# ReXGlue generated code (keep generated/rexglue.cmake)
+generated/*
+!generated/rexglue.cmake
 
 # Binaries
 *.exe
@@ -51,3 +53,4 @@ logs/
 # Temp
 *.tmp
 *.temp
+__pycache__/

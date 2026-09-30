@@ -1,0 +1,15 @@
+# Splatterhouse Recompiled - ReXGlue manifest
+# Generado con `rexglue init`, adaptado al layout del proyecto.
+# Verifica codegen con: rexglue codegen splatterhouse_manifest.toml
+
+[project]
+name = "splatterhouse"
+sdk_version = "0.10.0"
+game_root = "game"
+
+[entrypoint]
+# XEX desencriptado (xextool -r -c default.xex -> default.dec.xex). No commitear.
+file_path = "game/default.dec.xex"
+out_directory_path = "generated"
+# Configuracion de analysis/codegen y overrides (flags, functions, rexcrt, hooks)
+includes = ["config/codegen.toml"]

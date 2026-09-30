@@ -33,20 +33,24 @@ if (-not (Test-Cmd ninja)) {
     else { Write-Host "  winget install Ninja-build.Ninja" -ForegroundColor Yellow }
 } else { Write-Host "[ok] ninja $(ninja --version)" -ForegroundColor Green }
 
-# 4. Clang / MSVC
-if (Test-Cmd clang) { Write-Host "[ok] clang $(clang --version | Select-Object -First 1)" -ForegroundColor Green }
-else { Write-Host "[info] Clang no encontrado, se usara MSVC (Visual Studio 2022 requerido)." -ForegroundColor Yellow }
-
-if (-not (Test-Cmd cl) -and -not (Test-Cmd clang)) {
-    Write-Host "[warn] Ni cl.exe ni clang encontrados. Instala Visual Studio 2022 con 'Desktop development with C++'." -ForegroundColor Yellow
-    Write-Host "  https://visualstudio.microsoft.com/downloads/" -ForegroundColor Yellow
+# 4. Clang (ReXGlue requiere Clang 18+, 20.x recomendado)
+if (Test-Cmd clang) {
+    Write-Host "[ok] clang $(clang --version | Select-Object -First 1)" -ForegroundColor Green
+    $clangVer = (clang --version)[0]
+    if ($clangVer -match "version (\d+)\." -and [int]$Matches[1] -lt 18) {
+        Write-Host "[warn] ReXGlue requiere Clang 18+ (encontrado: $clangVer)." -ForegroundColor Yellow
+        Write-Host "  Instala LLVM con: winget install LLVM.LLVM" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "[warn] Clang no encontrado. ReXGlue lo requiere (winget install LLVM.LLVM)." -ForegroundColor Yellow
+    Write-Host "  En Windows tambien sirve el 'C++ Clang Compiler for Windows' de Visual Studio 2022." -ForegroundColor Yellow
 }
 
-# 5. Submodules
+# 5. Submodules (rexglue-sdk; los submodulos internos se piden con --recursive)
 if (Test-Path ".git") {
-    Write-Host "[setup] Inicializando submodulos..." -ForegroundColor Cyan
-    git submodule update --init --recursive
-    Write-Host "[ok] Submodulos listos" -ForegroundColor Green
+    Write-Host "[setup] Inicializando submodulo rexglue-sdk..." -ForegroundColor Cyan
+    git submodule update --init extern/rexglue-sdk
+    Write-Host "[ok] rexglue-sdk listo" -ForegroundColor Green
 } else {
     Write-Host "[info] No es repo git aun. Inicializa con: git init; git submodule..." -ForegroundColor Yellow
     Write-Host "  O clona con --recursive si ya es repo remoto." -ForegroundColor Yellow
@@ -54,10 +58,10 @@ if (Test-Path ".git") {
 
 # 6. Build bootstrap
 Write-Host "`n[setup] Para compilar (sin XEX):" -ForegroundColor Cyan
-Write-Host "  cmake --preset windows-release"
-Write-Host "  cmake --build build/windows-release -j"
-Write-Host "`n[setup] Para recompilar con XEX:"
+Write-Host "  cmake --preset win-amd64-release"
+Write-Host "  cmake --build out/build/win-amd64-release -j"
+Write-Host "`n[setup] Para codegen con XEX (requiere rexglue CLI):" -ForegroundColor Cyan
 Write-Host "  python tools/recompile.py --xex game/default.dec.xex"
-Write-Host "  cmake --preset windows-release && cmake --build build/windows-release -j"
+Write-Host "  cmake --build out/build/win-amd64-release -j"
 
 Write-Host "`n[setup] Hecho." -ForegroundColor Green
