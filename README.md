@@ -21,7 +21,7 @@ Port nativo para PC de **Splatterhouse (2010)** (versión Xbox 360, title id `4E
 - **Caché de shaders precompilada** para evitar tirones.
 
 ### Pendiente / limitaciones conocidas
-- **Tirones al compilar shaders** en la primera partida (el juego compila sus materiales y el port los traduce a D3D12). Mitigado con la caché de shaders (`shadercache/`).
+- **Tirones al compilar shaders** la primera vez en zonas nuevas: el port traduce el shader a D3D12 y crea el PSO (compila el driver). El SDK ya lo hace **en hilos de fondo** y **salta el draw** si no está listo (popping breve, no congelación), y **precrea todas las pipelines de la caché al arrancar** (medido: 401 PSOs en ~530 ms). El PSO en sí es barato (~2–11 ms) — el coste es "cientos seguidos". **Solución: distribuir una caché completa** (`shadercache/`, generada con `tools\pack_shadercache.bat`). Diagnóstico: cvar `sh_pso_log`.
 - **Iluminación con RTV**: si pones la ruta `rtv` la escena casi se apaga (limitación de diseño de la ruta RTV; **hay que usar `rov`**). Ver `docs/rov-performance.md`.
 - **Rendimiento de ROV**: la vía de fondo para GPUs modestas es optimizar el *pixel shader* de ROV (el SDK lo deja como TODO: especializar con parámetros de RT estáticos). De momento se compensa con **presets** de resolución + FSR.
 - **Menú de opciones in-game**: pantalla propia con estilo de juego (tecla **F5**), no integrada literalmente en el menú Scaleform del juego (no se puede editar el `.gfx`).
@@ -142,6 +142,7 @@ assets/                     # datos del juego instalados (gitignored; junction a
 tools/
   extract-xiso.exe          # extraer la ISO de Xbox 360
   xextool.exe               # desencriptar el XEX
+  pack_shadercache.bat      # empaquetar la cache de shaders para el release
   setup.ps1 / recompile.py  # setup y codegen (utilidades de desarrollo)
 generated/                  # código recompilado (autogenerado; gitignored)
 config/codegen.toml         # flags de codegen + overrides [functions]

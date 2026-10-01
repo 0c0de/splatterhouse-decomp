@@ -31,6 +31,11 @@ REXCVAR_DEFINE_BOOL(sh_60fps, true, "Graphics",
 REXCVAR_DEFINE_BOOL(sh_graphics_menu, false, "Graphics",
     "Open the graphics menu on startup (testing)");
 
+// Dev: carga directa de nivel (para calentar la cache de shaders por
+// capitulos). La consume el runtime (VdSwap) y se limpia sola.
+REXCVAR_DEFINE_STRING(sh_warp, "", "System",
+    "Dev: request loading a level by name (e.g. lvl2_shanty), then cleared");
+
 // Idioma del juego (Gamebryo LanguageDef). auto = locale del host.
 REXCVAR_DEFINE_STRING(sh_language, "auto", "System",
     "Game language: auto, english, french, italian, german, spanish, japanese")

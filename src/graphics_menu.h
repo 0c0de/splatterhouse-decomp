@@ -227,6 +227,25 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
 
   void BuildRows() {
     rows_.push_back(
+        {"Warp nivel (dev)",
+         [this] {
+           static const char* levels[] = {"lvl1_manor_interior", "lvl2_shanty",
+                                           "lvl3_manor_catacombs", "lvl4_carnival",
+                                           "lvl5_manor_grounds", "lvl7_manor_chapel",
+                                           "survival_arena", "frontend"};
+           return std::string(levels[warp_index_]);
+         },
+         [this](int d) {
+           static const char* levels[] = {"lvl1_manor_interior", "lvl2_shanty",
+                                           "lvl3_manor_catacombs", "lvl4_carnival",
+                                           "lvl5_manor_grounds", "lvl7_manor_chapel",
+                                           "survival_arena", "frontend"};
+           warp_index_ = (warp_index_ + d + 8) % 8;
+           SetString("sh_warp", levels[warp_index_]);
+         },
+         false});
+
+    rows_.push_back(
         {"Idioma",
          [] { return QueryString("sh_language"); },
          [](int d) {
@@ -360,6 +379,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
   int selected_ = 0;
   int preset_index_ = 3;
   int preset_row_ = 1;
+  int warp_index_ = 0;
   bool dirty_ = false;
   float saved_flash_ = 0.0f;
 
