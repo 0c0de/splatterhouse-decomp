@@ -31,9 +31,27 @@ REXCVAR_DEFINE_BOOL(sh_60fps, true, "Graphics",
 REXCVAR_DEFINE_BOOL(sh_graphics_menu, false, "Graphics",
     "Open the graphics menu on startup (testing)");
 
+// Dev: carga directa de nivel (para calentar la cache de shaders por
+// capitulos). La consume el runtime (VdSwap) y se limpia sola.
+REXCVAR_DEFINE_STRING(sh_warp, "", "System",
+    "Dev: request loading a level by name (e.g. lvl2_shanty), then cleared");
+
 // Idioma del juego (Gamebryo LanguageDef). auto = locale del host.
 REXCVAR_DEFINE_STRING(sh_language, "auto", "System",
     "Game language: auto, english, french, italian, german, spanish, japanese")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
+// Desbloqueo de niveles de la historia: GetHighestReachedLevel devuelve el
+// maximo, asi el selector de capitulos del frontend los muestra todos.
+REXCVAR_DEFINE_BOOL(sh_unlock_levels, true, "System",
+    "Unlock all story levels (chapter select)");
+
+// Nivel maximo que se reporta al desbloquear (los niveles son lvl1..lvl7).
+REXCVAR_DEFINE_INT32(sh_unlock_levels_max, 7, "System",
+    "Highest level index reported when sh_unlock_levels is on");
+
+// Diagnostico del desbloqueo de niveles (loguea que getters se consultan).
+REXCVAR_DEFINE_BOOL(sh_unlock_debug, false, "System",
+    "Log level-unlock getter queries (diagnostics)");
 
 REX_DEFINE_APP(splatterhouse, SplatterhouseApp::Create)

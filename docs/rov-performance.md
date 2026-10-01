@@ -98,6 +98,24 @@ el SDK: `Modification`, `Shader`/`Translation`, `PipelineDescription`,
 serialización `.xpso`/`.xpso`-Vulkan y `Modification::kVersion`. Es un cambio
 multi-día (ambos backends) y candidato a PR upstream.
 
+## 3c. Compilación de shaders / PSO (los tirones de la "primera vez")
+
+Al usar un material nuevo, el port: **(1)** traduce el shader Xenon → DXBC (**en hilos de fondo**), **(2)** crea el PSO D3D12 (compilación del driver, **en hilos de fondo** `d3d12_pipeline_creation_threads`) y **(3)** si aún no está listo, **salta el draw** (`async_shader_compilation = true`) → popping breve en vez de congelar el frame. Todo esto **ya está en el SDK**.
+
+Al arrancar, el SDK **precrea en paralelo** todas las pipelines de la caché y lo registra (`log_level=info`):
+
+```
+Translated 346 shaders from the storage in 28 milliseconds
+Created 401 graphics pipelines (not including reading the descriptions) from the storage in 530 milliseconds
+```
+
+**Medición por PSO** (`sh_pso_log=true`, RTX 5060 Ti): **~2–11 ms** cada uno. O sea, no es un PSO carísimo, sino **cientos seguidos** al entrar en una zona nueva → la solución es **caché completa + prewarm** (ya existente), no más asincronía.
+
+- Diagnóstico: cvar **`sh_pso_log`** → log `[sh-pso] created VS … PS … in X ms` por pipeline y `draw skipped` cuando falta uno; `log_level=info` muestra los totales del arranque.
+- Reparto: `d3d12_pipeline_creation_threads` (auto).
+- **Distribuir la caché**: jugar una vez → `tools\pack_shadercache.bat` copia `%MyDocuments%\splatterhouse\cache\shaders\shareable\*` a `shadercache\` del release; `install.bat` los instala al usuario. Con la caché completa, los PSO se crean **en el arranque** (una vez) y no durante el juego.
+- Opcional (per-machine, no distribuible): `ID3D12PipelineLibrary` para guardar los blobs compilados por el driver y que el prewarm sea casi instantáneo en ejecuciones posteriores.
+
 ## 4. Wins parciales (más baratos)
 
 - Especializar solo los combos más frecuentes (p.ej. RT `k_8_8_8_8`, 1 RT, sin

@@ -10,14 +10,19 @@
 #include <Windows.h>
 #endif
 #include <fstream>
+#include <vector>
 
 #include <rex/cvar.h>
 #include <rex/rex_app.h>
 #include <rex/logging.h>
 #include <rex/memory.h>
 #include <rex/filesystem.h>
+#include <rex/system/kernel_state.h>
+#include <rex/system/xam/content_manager.h>
 #include <rex/system/xmemory.h>
 #include <rex/ui/keybinds.h>
+
+#include <fmt/format.h>
 
 #include "graphics_menu.h"
 
@@ -86,9 +91,52 @@ class SplatterhouseApp : public rex::ReXApp {
     if (!rex::cvar::HasNonDefaultValue("video_mode_refresh_rate")) {
       rex::cvar::SetFlagByName("video_mode_refresh_rate", "60");
     }
+  }
+
+  // `vsync` y `d3d12_present_frame_limiter*` los registra el plugin GPU, que se
+  // carga DESPUES de OnPreSetup, asi que alli no existen todavia. OnPostSetup
+  // corre cuando el plugin ya esta cargado (y el worker de vblank lee `vsync`
+  // en vivo), asi que aqui si aplican.
+  //
+  // VSync off + present frame limiter a 60: un frame que excede el presupuesto
+  // ya no hace caer la presentacion a mitad de vblank (60 -> 30), que se percibe
+  // como "parones"; el limiter acota el ritmo a 60 sin bloquear en vblank.
+  void OnPostSetup() override {
     if (!rex::cvar::HasNonDefaultValue("vsync")) {
-      rex::cvar::SetFlagByName("vsync", "true");
+      rex::cvar::SetFlagByName("vsync", "false");
     }
+    if (!rex::cvar::HasNonDefaultValue("d3d12_present_frame_limiter")) {
+      rex::cvar::SetFlagByName("d3d12_present_frame_limiter", "true");
+    }
+    if (!rex::cvar::HasNonDefaultValue("d3d12_present_frame_limiter_fps")) {
+      rex::cvar::SetFlagByName("d3d12_present_frame_limiter_fps", "60");
+    }
+    // Sin tearing (ALLOW_TEARING off): con vsync=false + limiter, el flag de
+    // tearing permitia desgarro en frames que no caian dentro del vblank. Con
+    // esto desactivado se elimina sin volver al bajon a 30 del vsync clasico.
+    if (!rex::cvar::HasNonDefaultValue("d3d12_allow_variable_refresh_rate_and_tearing")) {
+      rex::cvar::SetFlagByName("d3d12_allow_variable_refresh_rate_and_tearing", "false");
+    }
+    // Red de seguridad: si el toml trae un resolution_scale que dispara el
+    // ancho de render por encima del limite seguro con ROV (p.ej. 2x a 1080p =
+    // 3840 px), la GPU se satura y Windows lo marca como "no responde". Lo
+    // reducimos aqui para no colgar al arrancar.
+    {
+      const int32_t width = std::max(1, rex::cvar::Query<int32_t>("video_mode_width"));
+      const int32_t scale = rex::cvar::Query<int32_t>("resolution_scale");
+      const int32_t max_scale = std::max(1, std::min(4, 2560 / width));
+      if (scale > max_scale) {
+        REXLOG_WARN("[sh-perf] resolution_scale={} con ancho {} excede el limite ({}x{}); se ajusta a {}",
+                    scale, width, width, scale, max_scale);
+        rex::cvar::SetFlagByName("resolution_scale", std::to_string(max_scale));
+      }
+    }
+    REXLOG_INFO("[sh-perf] vsync={} limiter={} fps={} tearing={} scale={}",
+                rex::cvar::Query<bool>("vsync"),
+                rex::cvar::Query<bool>("d3d12_present_frame_limiter"),
+                rex::cvar::Query<double>("d3d12_present_frame_limiter_fps"),
+                rex::cvar::Query<bool>("d3d12_allow_variable_refresh_rate_and_tearing"),
+                rex::cvar::Query<int32_t>("resolution_scale"));
   }
 
   // Ruta de datos del juego: assets/ junto al exe (o override con
@@ -191,8 +239,42 @@ class SplatterhouseApp : public rex::ReXApp {
   rex::ui::ImGuiDrawer* graphics_drawer_ = nullptr;
   std::filesystem::path graphics_config_path_;
 
+  // Instala paquetes DLC (STFS: CON/LIVE/PIRS) que el usuario haya dejado en la
+  // carpeta de datos del usuario, para que el engine los vea via XamContent.
+  // Se buscan en varias ubicaciones (la del xuid del perfil, el xuid comun
+  // 0000000000000000, y la raiz).
+  void InstallDlcPackages() {
+    auto* kernel_state = rex::runtime::current_kernel_state();
+    if (!kernel_state || !kernel_state->content_manager()) {
+      return;
+    }
+    const uint32_t title_id = kernel_state->title_id();
+    const std::string title_str = fmt::format("{:08X}", title_id);
+    auto user_root = rex::filesystem::GetUserFolder() / "splatterhouse";
+    std::vector<std::filesystem::path> candidates = {
+        user_root / title_str / "00000002",
+        user_root / "0000000000000000" / title_str / "00000002",
+    };
+    // Cualquier subcarpeta de primer nivel (xuid de perfil) con <title>/00000002.
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(user_root, ec)) {
+      if (ec || !entry.is_directory(ec)) {
+        continue;
+      }
+      candidates.push_back(entry.path() / title_str / "00000002");
+    }
+    uint32_t total = 0;
+    for (const auto& dir : candidates) {
+      total += kernel_state->content_manager()->InstallContentFromDirectory(dir);
+    }
+    if (total) {
+      REXLOG_INFO("[sh-dlc] Instalados {} paquete(s) DLC desde la carpeta de usuario", total);
+    }
+  }
+
   void OnPostLoadXexImage() override {
     ApplyGuestMemoryPatches();
+    InstallDlcPackages();
     if (!REXCVAR_GET(dump_guest)) {
       return;
     }
