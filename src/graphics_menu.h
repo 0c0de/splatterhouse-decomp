@@ -58,10 +58,13 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     const float panel_w = std::min(io.DisplaySize.x * 0.74f, 940.0f * scale);
     const float panel_x = (io.DisplaySize.x - panel_w) * 0.5f;
 
+    // Texto mas grande: se escala la fuente de todo el menu.
+    const float font_scale = 1.7f;
+
     ImGui::SetCursorPos(ImVec2(panel_x, 70.0f * scale));
-    ImGui::SetWindowFontScale(2.2f);
+    ImGui::SetWindowFontScale(2.6f);
     ImGui::TextColored(kAccent, "OPCIONES");
-    ImGui::SetWindowFontScale(1.0f);
+    ImGui::SetWindowFontScale(font_scale);
     ImGui::SetCursorPosX(panel_x);
     ImGui::TextColored(kDim, "Splatterhouse - opciones del port");
 
@@ -74,10 +77,10 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
       ImGui::SetCursorPosX(panel_x);
       ImGui::TextColored(selected ? kAccent : kDim, selected ? ">" : " ");
 
-      ImGui::SameLine(panel_x + 26.0f * scale);
+      ImGui::SameLine(panel_x + 34.0f * scale * font_scale);
       ImGui::TextColored(selected ? kText : kTextDim, "%s", row.label.c_str());
 
-      ImGui::SameLine(panel_x + panel_w * 0.58f);
+      ImGui::SameLine(panel_x + panel_w * 0.62f);
       const std::string value = row.get();
       ImGui::TextColored(selected ? kAccent : kText, "%s %s %s", selected ? "<" : " ",
                          value.c_str(), selected ? ">" : " ");
@@ -86,20 +89,21 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
         ImGui::TextColored(kDim, " [reinicio]");
       }
 
-      if (ImGui::IsMouseHoveringRect(ImVec2(panel_x, ImGui::GetItemRectMin().y - 2.0f * scale),
+      if (ImGui::IsMouseHoveringRect(ImVec2(panel_x, ImGui::GetItemRectMin().y - 3.0f * scale),
                                      ImVec2(panel_x + panel_w,
-                                            ImGui::GetItemRectMax().y + 2.0f * scale))) {
+                                            ImGui::GetItemRectMax().y + 3.0f * scale))) {
         selected_ = i;
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
           ChangeSelected(+1);
           dirty_ = true;
         }
       }
-      ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10.0f * scale);
+      ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12.0f * scale);
     }
 
-    DrawFooter(io, panel_x, panel_w, scale);
+    DrawFooter(io, panel_x, panel_w, scale, font_scale);
 
+    ImGui::SetWindowFontScale(1.0f);
     ImGui::End();
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
@@ -150,8 +154,9 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     }
   }
 
-  void DrawFooter(ImGuiIO& io, float panel_x, float panel_w, float scale) {
-    ImGui::SetCursorPos(ImVec2(panel_x, io.DisplaySize.y - 78.0f * scale));
+  void DrawFooter(ImGuiIO& io, float panel_x, float panel_w, float scale, float font_scale) {
+    ImGui::SetWindowFontScale(font_scale);
+    ImGui::SetCursorPos(ImVec2(panel_x, io.DisplaySize.y - 92.0f * scale));
     ImGui::TextColored(kDim,
                        "Flechas: navegar/cambiar   S: guardar   Esc/F5: cerrar%s",
                        dirty_ ? "   (cambios sin guardar)" : "");
@@ -243,6 +248,15 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
            warp_index_ = (warp_index_ + d + 8) % 8;
            SetString("sh_warp", levels[warp_index_]);
          },
+         false});
+
+    rows_.push_back(
+        {"Desbloquear niveles",
+         [] {
+           return std::string(rex::cvar::Query<bool>("sh_unlock_levels") ? "activado"
+                                                                         : "desactivado");
+         },
+         [](int d) { CycleBool("sh_unlock_levels", d); },
          false});
 
     rows_.push_back(
@@ -368,7 +382,15 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
         {"Escala de dibujo",
          [] { return std::to_string(rex::cvar::Query<int32_t>("resolution_scale")); },
          [](int d) {
-           static const std::vector<std::string> values = {"1", "2", "3", "4"};
+           // Limitar la escala para que el ancho de render (video_mode_width *
+           // escala) no supere el limite seguro con la ruta ROV. A 1080p, 2x ya
+           // es 3840 px y saturaba la GPU (Application Hang). El tope es 2560.
+           const int32_t width = std::max(1, rex::cvar::Query<int32_t>("video_mode_width"));
+           const int max_scale = std::max(1, std::min(4, 2560 / width));
+           std::vector<std::string> values;
+           for (int i = 1; i <= max_scale; ++i) {
+             values.push_back(std::to_string(i));
+           }
            CycleString("resolution_scale", values, d);
          },
          true});

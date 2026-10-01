@@ -22,6 +22,8 @@ set(SPLATTERHOUSE_SOURCES
     src/main.cpp
     src/sh_60fps_hook.cpp
     src/sh_language_hook.cpp
+    src/sh_unlock_hook.cpp
+    src/sh_uf_diag.cpp
 )
 
 if(WIN32)

@@ -41,4 +41,17 @@ REXCVAR_DEFINE_STRING(sh_language, "auto", "System",
     "Game language: auto, english, french, italian, german, spanish, japanese")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
+// Desbloqueo de niveles de la historia: GetHighestReachedLevel devuelve el
+// maximo, asi el selector de capitulos del frontend los muestra todos.
+REXCVAR_DEFINE_BOOL(sh_unlock_levels, true, "System",
+    "Unlock all story levels (chapter select)");
+
+// Nivel maximo que se reporta al desbloquear (los niveles son lvl1..lvl7).
+REXCVAR_DEFINE_INT32(sh_unlock_levels_max, 7, "System",
+    "Highest level index reported when sh_unlock_levels is on");
+
+// Diagnostico del desbloqueo de niveles (loguea que getters se consultan).
+REXCVAR_DEFINE_BOOL(sh_unlock_debug, false, "System",
+    "Log level-unlock getter queries (diagnostics)");
+
 REX_DEFINE_APP(splatterhouse, SplatterhouseApp::Create)

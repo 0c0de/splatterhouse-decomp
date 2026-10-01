@@ -5,6 +5,9 @@ cmake-build-*/
 _ReCompiled/
 legacy/recompiled/
 
+# Release empaquetado (make_release.bat)
+splatterhouse-decomp-release/
+
 # ReXGlue generated code (keep generated/rexglue.cmake)
 generated/*
 !generated/rexglue.cmake
