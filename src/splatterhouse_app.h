@@ -10,6 +10,8 @@
 #include <Windows.h>
 #endif
 #include <fstream>
+#include <functional>
+#include <optional>
 #include <vector>
 
 #include <rex/cvar.h>
@@ -78,19 +80,45 @@ class SplatterhouseApp : public rex::ReXApp {
   // Defaults seguros si el usuario no los ha puesto en splatterhouse.toml.
   // Sin gpu_plugin no hay GPU (pantalla negra); sin "rov" la iluminacion sale
   // mal (la ruta RTV aproxima la eDRAM del X360).
+  bool IsVulkanBackend() const {
+    return rex::cvar::Query<std::string>("gpu_backend") == "vulkan";
+  }
+
   void OnPreSetup(rex::RuntimeConfig& config) override {
     if (config.gpu_plugin.empty()) {
       config.gpu_plugin = "xenos";
     }
-    if (!rex::cvar::HasNonDefaultValue("render_target_path_d3d12")) {
-      rex::cvar::SetFlagByName("render_target_path_d3d12", "rov");
+    const bool vulkan = IsVulkanBackend();
+    if (vulkan) {
+      REXLOG_INFO("[sh-perf] backend Vulkan seleccionado (gpu_backend=vulkan)");
     }
-    if (!rex::cvar::HasNonDefaultValue("present_effect")) {
-      rex::cvar::SetFlagByName("present_effect", "fsr");
-    }
+    // NOTA: `render_target_path_vulkan` / `render_target_path_d3d12` los
+    // registra el plugin GPU, que se carga DESPUES de OnPreSetup; aqui serian
+    // un no-op. Se fijan en OnPostSetup.
     if (!rex::cvar::HasNonDefaultValue("video_mode_refresh_rate")) {
       rex::cvar::SetFlagByName("video_mode_refresh_rate", "60");
     }
+  }
+
+  // Corre DESPUES de cargar el plugin GPU (cvars ya registradas) y ANTES de
+  // construir el runtime (init de GPU / render target cache). Es el sitio
+  // correcto para fijar la ruta de render target, que en OnPreSetup seria un
+  // no-op porque el plugin aun no se ha cargado.
+  std::optional<rex::PathConfig> OnFinalizePaths(
+      const rex::PathConfig& defaults,
+      std::function<void(rex::PathConfig)> resume) override {
+    (void)resume;
+    // Equivalente a ROV en D3D12: la ruta host render targets aproxima la eDRAM
+    // del X360 y deja la escena casi negra (no se ven los logos). El path FSI
+    // (fragment shader interlock) la emula de verdad.
+    if (IsVulkanBackend()) {
+      if (!rex::cvar::HasNonDefaultValue("render_target_path_vulkan")) {
+        rex::cvar::SetFlagByName("render_target_path_vulkan", "fsi");
+      }
+    } else if (!rex::cvar::HasNonDefaultValue("render_target_path_d3d12")) {
+      rex::cvar::SetFlagByName("render_target_path_d3d12", "rov");
+    }
+    return defaults;
   }
 
   // `vsync` y `d3d12_present_frame_limiter*` los registra el plugin GPU, que se
@@ -102,20 +130,23 @@ class SplatterhouseApp : public rex::ReXApp {
   // ya no hace caer la presentacion a mitad de vblank (60 -> 30), que se percibe
   // como "parones"; el limiter acota el ritmo a 60 sin bloquear en vblank.
   void OnPostSetup() override {
+    const bool vulkan = IsVulkanBackend();
     if (!rex::cvar::HasNonDefaultValue("vsync")) {
       rex::cvar::SetFlagByName("vsync", "false");
     }
-    if (!rex::cvar::HasNonDefaultValue("d3d12_present_frame_limiter")) {
-      rex::cvar::SetFlagByName("d3d12_present_frame_limiter", "true");
-    }
-    if (!rex::cvar::HasNonDefaultValue("d3d12_present_frame_limiter_fps")) {
-      rex::cvar::SetFlagByName("d3d12_present_frame_limiter_fps", "60");
-    }
-    // Sin tearing (ALLOW_TEARING off): con vsync=false + limiter, el flag de
-    // tearing permitia desgarro en frames que no caian dentro del vblank. Con
-    // esto desactivado se elimina sin volver al bajon a 30 del vsync clasico.
-    if (!rex::cvar::HasNonDefaultValue("d3d12_allow_variable_refresh_rate_and_tearing")) {
-      rex::cvar::SetFlagByName("d3d12_allow_variable_refresh_rate_and_tearing", "false");
+    if (!vulkan) {
+      if (!rex::cvar::HasNonDefaultValue("d3d12_present_frame_limiter")) {
+        rex::cvar::SetFlagByName("d3d12_present_frame_limiter", "true");
+      }
+      if (!rex::cvar::HasNonDefaultValue("d3d12_present_frame_limiter_fps")) {
+        rex::cvar::SetFlagByName("d3d12_present_frame_limiter_fps", "60");
+      }
+      // Sin tearing (ALLOW_TEARING off): con vsync=false + limiter, el flag de
+      // tearing permitia desgarro en frames que no caian dentro del vblank. Con
+      // esto desactivado se elimina sin volver al bajon a 30 del vsync clasico.
+      if (!rex::cvar::HasNonDefaultValue("d3d12_allow_variable_refresh_rate_and_tearing")) {
+        rex::cvar::SetFlagByName("d3d12_allow_variable_refresh_rate_and_tearing", "false");
+      }
     }
     // Red de seguridad: si el toml trae un resolution_scale que dispara el
     // ancho de render por encima del limite seguro con ROV (p.ej. 2x a 1080p =
@@ -131,12 +162,19 @@ class SplatterhouseApp : public rex::ReXApp {
         rex::cvar::SetFlagByName("resolution_scale", std::to_string(max_scale));
       }
     }
-    REXLOG_INFO("[sh-perf] vsync={} limiter={} fps={} tearing={} scale={}",
-                rex::cvar::Query<bool>("vsync"),
-                rex::cvar::Query<bool>("d3d12_present_frame_limiter"),
-                rex::cvar::Query<double>("d3d12_present_frame_limiter_fps"),
-                rex::cvar::Query<bool>("d3d12_allow_variable_refresh_rate_and_tearing"),
-                rex::cvar::Query<int32_t>("resolution_scale"));
+    if (vulkan) {
+      REXLOG_INFO("[sh-perf] Vulkan: vsync={} path={} scale={}",
+                  rex::cvar::Query<bool>("vsync"),
+                  rex::cvar::Query<std::string>("render_target_path_vulkan"),
+                  rex::cvar::Query<int32_t>("resolution_scale"));
+    } else {
+      REXLOG_INFO("[sh-perf] vsync={} limiter={} fps={} tearing={} scale={}",
+                  rex::cvar::Query<bool>("vsync"),
+                  rex::cvar::Query<bool>("d3d12_present_frame_limiter"),
+                  rex::cvar::Query<double>("d3d12_present_frame_limiter_fps"),
+                  rex::cvar::Query<bool>("d3d12_allow_variable_refresh_rate_and_tearing"),
+                  rex::cvar::Query<int32_t>("resolution_scale"));
+    }
   }
 
   // Ruta de datos del juego: assets/ junto al exe (o override con
@@ -194,12 +232,38 @@ class SplatterhouseApp : public rex::ReXApp {
     if (g_graphics_menu) {
       g_graphics_menu->RequestClose();
     } else if (graphics_drawer_) {
-      new GraphicsMenuDialog(graphics_drawer_, graphics_config_path_);
+      new GraphicsMenuDialog(graphics_drawer_, graphics_config_path_, [this]() { QuitGame(); });
     }
   }
 
+// Cierre del juego pedido desde la pantalla de opciones (fila "Salir del
+// juego").
+//
+// NO usar app_context().RequestDeferredQuit() aqui. Eso saca del bucle de
+// mensajes y lleva a ReXApp::OnDestroy(), que destruye el ImGuiDrawer y el
+// presenter MIENTRAS el hilo guest sigue emulando el juego, y luego hace
+// module_thread_.join() sobre un hilo que no termina nunca (el juego emulado no
+// acaba solo) -> crash o cuelgue. Por eso el propio SDK cierra con _Exit(0) en
+// OnClosing, en vez de con el teardown normal.
+//
+// Lo correcto es la misma via que la X de la ventana:
+// Window::RequestClose() -> OnBeforeClose() -> ReXApp::OnClosing(), que hace
+// TerminateTitle() + rex::FlushLogging() + std::_Exit(0). El proceso termina
+// dentro de esta llamada, asi que no se toca nada despues.
+void QuitGame() {
+  REXLOG_WARN("[sh-ui] cierre solicitado desde el menu de opciones");
+  auto* win = window();
+  if (!win) {
+    return;
+  }
+  win->RequestClose();
+}
+
   // Recibe F5 antes que ImGui (z-order alto). LaunchImpl no deja sobrescribir
   // ReXApp::OnKeyDown (es privado), asi que usamos un listener propio.
+  // Ademas enruta el resto de teclas al menu abierto: el ImGuiDrawer (z-order
+  // 64) las recibe, pero su ruta de teclado no es fiable aqui, y con el menu
+  // abierto queremos que el juego no las vea.
   struct GraphicsKeyListener : public rex::ui::WindowInputListener {
     std::function<void()> toggle;
     void OnKeyDown(rex::ui::KeyEvent& e) override {
@@ -208,6 +272,16 @@ class SplatterhouseApp : public rex::ReXApp {
           toggle();
         }
         e.set_handled(true);
+        return;
+      }
+      if (g_graphics_menu) {
+        g_graphics_menu->PushKey(e.virtual_key());
+        e.set_handled(true);
+      }
+    }
+    void OnKeyUp(rex::ui::KeyEvent& e) override {
+      if (g_graphics_menu) {
+        g_graphics_menu->ReleaseKey(e.virtual_key());
       }
     }
   };
@@ -225,7 +299,7 @@ class SplatterhouseApp : public rex::ReXApp {
       window()->AddInputListener(&graphics_key_listener_, 128);
     }
     if (REXCVAR_GET(sh_graphics_menu)) {
-      new GraphicsMenuDialog(drawer, graphics_config_path_);
+      new GraphicsMenuDialog(drawer, graphics_config_path_, [this]() { QuitGame(); });
     }
   }
 
