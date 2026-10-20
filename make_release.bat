@@ -50,27 +50,12 @@ if errorlevel 1 goto failed
 copy /Y "%ROOT%tools\xextool.exe" "%OUT%\tools\" >nul
 if errorlevel 1 goto failed
 
-echo [4/7] Copiando configuracion por defecto...
-rem install.bat crea el toml si no existe; damos uno ya listo (se respeta si el
-rem usuario ya lo tiene). Si el build no trae toml, usamos el del instalador.
-if exist "%BUILD%\splatterhouse.toml" (
-  copy /Y "%BUILD%\splatterhouse.toml" "%OUT%\splatterhouse.toml" >nul
-) else (
-  > "%OUT%\splatterhouse.toml" echo # Splatterhouse Recompiled - configuracion
-  >>"%OUT%\splatterhouse.toml" echo log_level = "warn"
-  >>"%OUT%\splatterhouse.toml" echo log_file = "splatterhouse.log"
-  >>"%OUT%\splatterhouse.toml" echo gpu_plugin = "xenos"
-  >>"%OUT%\splatterhouse.toml" echo render_target_path_d3d12 = "rov"
-  >>"%OUT%\splatterhouse.toml" echo present_effect = "fsr"
-  >>"%OUT%\splatterhouse.toml" echo video_mode_width = 1920
-  >>"%OUT%\splatterhouse.toml" echo video_mode_height = 1080
-  >>"%OUT%\splatterhouse.toml" echo vsync = false
-  >>"%OUT%\splatterhouse.toml" echo d3d12_present_frame_limiter = true
-  >>"%OUT%\splatterhouse.toml" echo d3d12_present_frame_limiter_fps = 60
-  >>"%OUT%\splatterhouse.toml" echo d3d12_allow_variable_refresh_rate_and_tearing = false
-  >>"%OUT%\splatterhouse.toml" echo fullscreen = true
-  >>"%OUT%\splatterhouse.toml" echo video_mode_refresh_rate = 60
-)
+echo [4/7] Configuracion por defecto...
+rem NO se copia el splatterhouse.toml del build: puede ser la config de
+rem desarrollo (backend vulkan, log_level=info...). Lo crea install.bat en el
+rem equipo del usuario, que ademas elige la resolucion interna segun la GPU.
+if exist "%OUT%\splatterhouse.toml" del "%OUT%\splatterhouse.toml"
+echo        se genera en la instalacion (install.bat)
 
 echo [5/7] Copiando cache de shaders precompilada...
 set "SHCACHE_SRC="
@@ -101,9 +86,17 @@ echo [7/7] Creando LEEME...
 >>"%OUT%\LEEME.txt" echo   F3  - Overlay de debug (FPS)
 >>"%OUT%\LEEME.txt" echo.
 >>"%OUT%\LEEME.txt" echo DLC:
->>"%OUT%\LEEME.txt" echo   Deja los paquetes DLC en:
->>"%OUT%\LEEME.txt" echo     %%USERPROFILE%%\Documents\splatterhouse\4E4D07F0\00000002\
->>"%OUT%\LEEME.txt" echo   El port los instala automaticamente al arrancar.
+>>"%OUT%\LEEME.txt" echo   Crea una carpeta "dlc" junto a splatterhouse.exe y deja ahi
+>>"%OUT%\LEEME.txt" echo   los paquetes DLC (CON/PIRS/LIVE). El port los instala solo.
+>>"%OUT%\LEEME.txt" echo   Tambien vale: %%USERPROFILE%%\Documents\splatterhouse\4E4D07F0\00000002\
+>>"%OUT%\LEEME.txt" echo.
+>>"%OUT%\LEEME.txt" echo ULTRAWIDE:
+>>"%OUT%\LEEME.txt" echo   F5 -^> Resolucion interna -^> 2560x1080 o 3440x1440 (el juego
+>>"%OUT%\LEEME.txt" echo   renderiza nativo a 21:9; sin bandas ni estiramiento).
+>>"%OUT%\LEEME.txt" echo.
+>>"%OUT%\LEEME.txt" echo SI EL JUEGO SE CIERRA AL ARRANCAR:
+>>"%OUT%\LEEME.txt" echo   Falta el contenido del juego. Mira assets_error.txt junto al
+>>"%OUT%\LEEME.txt" echo   ejecutable (dice que carpeta ha comprobado y que falta).
 >>"%OUT%\LEEME.txt" echo.
 >>"%OUT%\LEEME.txt" echo AVISO LEGAL: necesitas tu propia copia legitima del juego.
 >>"%OUT%\LEEME.txt" echo No se incluye ningun dato del juego en este paquete.

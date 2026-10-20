@@ -36,6 +36,8 @@ En `SplatterhouseApp::InstallDlcPackages()` (llamado desde
 `OnPostLoadXexImage`, cuando ya se conoce el title ID) el port:
 
 1. Busca paquetes STFS en:
+   - **`<carpeta del exe>\dlc\`** (la más cómoda: se crea sola al arrancar y el
+     log indica siempre la ruta)
    - `%USERPROFILE%\Documents\splatterhouse\<title>\00000002\`
    - `%USERPROFILE%\Documents\splatterhouse\0000000000000000\<title>\00000002\`
    - **cualquier subcarpeta de primer nivel** (p. ej. el xuid del perfil

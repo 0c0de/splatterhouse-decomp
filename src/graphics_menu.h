@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cfloat>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <functional>
@@ -37,6 +38,9 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
         quit_(std::move(quit)) {
     g_graphics_menu = this;
     BuildRows();
+    // El preset que se muestra sale de la configuracion actual (antes ponia
+    // siempre "Ultra" aunque el toml tuviera otra cosa).
+    preset_index_ = DetectPresetIndex();
     // La primera fila es un titulo de seccion: empezar en algo seleccionable.
     selected_ = NextSelectable(0, +1);
   }
@@ -374,16 +378,51 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
   }
   // Presets rapidos para GPUs de distinta potencia. Cambian sobre todo la
   // resolucion interna (coste GPU) y el limite de la cache de texturas.
+  // Se conserva el aspecto actual (16:9, 21:9...) y solo cambia la resolucion
+  // vertical, para no romper una configuracion ultrawide.
   static const char* PresetName(int index) {
     static const char* names[] = {"Bajo", "Medio", "Alto", "Ultra", "Personalizado"};
     return names[index];
   }
+  // Alturas/limites de cache de los presets (el ancho depende del aspecto).
+  static const int* PresetHeights() {
+    static const int heights[4] = {540, 720, 900, 1080};
+    return heights;
+  }
+  static const int* PresetCaches() {
+    static const int caches[4] = {256, 512, 768, 1024};
+    return caches;
+  }
+  // Preset que corresponde a la configuracion actual (4 = Personalizado).
+  static int DetectPresetIndex() {
+    if (!Available("video_mode_height") || !Available("texture_cache_memory_limit_soft")) {
+      return 4;
+    }
+    const int32_t height = rex::cvar::Query<int32_t>("video_mode_height");
+    const int32_t cache = rex::cvar::Query<int32_t>("texture_cache_memory_limit_soft");
+    const int* heights = PresetHeights();
+    const int* caches = PresetCaches();
+    for (int i = 0; i < 4; ++i) {
+      if (height == heights[i] && cache == caches[i]) {
+        return i;
+      }
+    }
+    return 4;
+  }
   static void ApplyPresetValues(int index) {
-    static const int presets[4][3] = {
-        {960, 540, 256}, {1280, 720, 512}, {1600, 900, 768}, {1920, 1080, 1024}};
-    SetString("video_mode_width", std::to_string(presets[index][0]));
-    SetString("video_mode_height", std::to_string(presets[index][1]));
-    SetString("texture_cache_memory_limit_soft", std::to_string(presets[index][2]));
+    const int* heights = PresetHeights();
+    const int* caches = PresetCaches();
+    const int32_t current_width = std::max(1, rex::cvar::Query<int32_t>("video_mode_width"));
+    const int32_t current_height = std::max(1, rex::cvar::Query<int32_t>("video_mode_height"));
+    const double aspect = double(current_width) / double(current_height);
+    const int32_t height = heights[index];
+    // Multiplo de 8 (alineacion de RTs del guest) y dentro del limite del video
+    // mode del guest (0x0FFF de ancho).
+    int32_t width = int32_t(std::lround(double(height) * aspect / 8.0) * 8.0);
+    width = std::clamp(width, 640, 4095);
+    SetString("video_mode_width", std::to_string(width));
+    SetString("video_mode_height", std::to_string(height));
+    SetString("texture_cache_memory_limit_soft", std::to_string(caches[index]));
     SetString("present_effect", "fsr");
   }
   void CyclePreset(int delta) {
@@ -452,10 +491,31 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
          [] { return FormatPair("video_mode_width", "video_mode_height", ""); },
          [](int d) {
            static const std::vector<std::array<int32_t, 2>> presets = {
-               {640, 360}, {960, 540}, {1280, 720}, {1600, 900}, {1920, 1080}, {2560, 1440}};
+               {640, 360},   {960, 540},   {1280, 720},  {1600, 900},
+               {1920, 1080}, {2560, 1080}, {2560, 1440}, {3440, 1440}};
            CyclePair("video_mode_width", "video_mode_height", presets, d);
+           // Eleccion manual: que el ajuste automatico de aspecto no la cambie.
+           SetString("sh_aspect", "keep");
          },
          true});
+
+    if (Available("sh_aspect")) {
+      rows_.push_back(
+          {"Aspecto interno",
+           [] {
+             const std::string mode = QueryString("sh_aspect");
+             return mode == "keep" ? std::string("manual") : mode;
+           },
+           [](int d) {
+             static const std::vector<std::string> values = {"auto", "16:9", "21:9", "32:9"};
+             if (QueryString("sh_aspect") == "keep") {
+               SetString("sh_aspect", "auto");
+               return;
+             }
+             CycleString("sh_aspect", values, d);
+           },
+           true});
+    }
 
     rows_.push_back(
         {"Escala de dibujo",
@@ -554,7 +614,8 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
            },
            [](int d) {
              static const std::vector<std::array<int32_t, 2>> sizes = {
-                 {0, 0}, {1280, 720}, {1600, 900}, {1920, 1080}};
+                 {0, 0},       {1280, 720},  {1600, 900},  {1920, 1080},
+                 {2560, 1080}, {2560, 1440}, {3440, 1440}, {3840, 1080}};
              CyclePair("window_width", "window_height", sizes, d);
            },
            true});
@@ -613,11 +674,35 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
          },
          false});
 
-    rows_.push_back(
-        {"Tearing / VRR",
-         [] { return OnOff("d3d12_allow_variable_refresh_rate_and_tearing"); },
-         [](int d) { CycleBool("d3d12_allow_variable_refresh_rate_and_tearing", d); },
-         true});
+    if (Available("d3d12_present_adaptive_tearing")) {
+      rows_.push_back(
+          {"Tearing / VRR",
+           [] {
+             if (rex::cvar::Query<bool>("d3d12_allow_variable_refresh_rate_and_tearing")) {
+               return std::string("siempre (VRR)");
+             }
+             return std::string(rex::cvar::Query<bool>("d3d12_present_adaptive_tearing")
+                                    ? "auto (solo si baja de 60)"
+                                    : "desactivado (60/30)");
+           },
+           [](int d) {
+             const bool always =
+                 rex::cvar::Query<bool>("d3d12_allow_variable_refresh_rate_and_tearing");
+             const bool adaptive = rex::cvar::Query<bool>("d3d12_present_adaptive_tearing");
+             int state = always ? 2 : (adaptive ? 1 : 0);
+             state = ((state + d) % 3 + 3) % 3;
+             SetString("d3d12_allow_variable_refresh_rate_and_tearing",
+                       state == 2 ? "true" : "false");
+             SetString("d3d12_present_adaptive_tearing", state == 0 ? "false" : "true");
+           },
+           false});
+    } else {
+      rows_.push_back(
+          {"Tearing / VRR",
+           [] { return OnOff("d3d12_allow_variable_refresh_rate_and_tearing"); },
+           [](int d) { CycleBool("d3d12_allow_variable_refresh_rate_and_tearing", d); },
+           true});
+    }
 
     AddHeader("Calidad");
 

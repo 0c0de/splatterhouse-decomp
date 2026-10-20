@@ -9,9 +9,13 @@
 #include <crtdbg.h>
 #include <Windows.h>
 #endif
+#include <cstdlib>
+#include <cmath>
 #include <fstream>
 #include <functional>
 #include <optional>
+#include <string>
+#include <system_error>
 #include <vector>
 
 #include <rex/cvar.h>
@@ -19,6 +23,7 @@
 #include <rex/logging.h>
 #include <rex/memory.h>
 #include <rex/filesystem.h>
+#include <rex/system.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/xam/content_manager.h>
 #include <rex/system/xmemory.h>
@@ -31,6 +36,8 @@
 REXCVAR_DECLARE(bool, dump_guest);
 REXCVAR_DECLARE(bool, sh_60fps);
 REXCVAR_DECLARE(bool, sh_graphics_menu);
+REXCVAR_DECLARE(bool, sh_skip_assets_check);
+REXCVAR_DECLARE(std::string, sh_aspect);
 
 class SplatterhouseApp : public rex::ReXApp {
  public:
@@ -141,13 +148,29 @@ class SplatterhouseApp : public rex::ReXApp {
       if (!rex::cvar::HasNonDefaultValue("d3d12_present_frame_limiter_fps")) {
         rex::cvar::SetFlagByName("d3d12_present_frame_limiter_fps", "60");
       }
-      // Sin tearing (ALLOW_TEARING off): con vsync=false + limiter, el flag de
-      // tearing permitia desgarro en frames que no caian dentro del vblank. Con
-      // esto desactivado se elimina sin volver al bajon a 30 del vsync clasico.
+      // Tearing: con el present sincronizado al vblank, un frame que pasa de
+      // 16.6 ms espera al siguiente vblank (33 ms) y el juego se queda clavado
+      // en 30 en vez de bajar progresivamente. Estrategia por defecto:
+      //   - `d3d12_allow_variable_refresh_rate_and_tearing=false` (no desgarrar
+      //     siempre; a 60 FPS el present va sincronizado y no hay tearing),
+      //   - `d3d12_present_adaptive_tearing=true` (el presenter deja pasar
+      //     ALLOW_TEARING solo en los frames que ya no llegan al presupuesto,
+      //     asi por debajo de 60 el ritmo baja progresivo: 58, 52, 45...).
+      // En un monitor VRR/FreeSync lo ideal es poner el primero a true (sin
+      // desgarro y sin bloqueo del present).
       if (!rex::cvar::HasNonDefaultValue("d3d12_allow_variable_refresh_rate_and_tearing")) {
         rex::cvar::SetFlagByName("d3d12_allow_variable_refresh_rate_and_tearing", "false");
       }
+      if (!rex::cvar::HasNonDefaultValue("d3d12_present_adaptive_tearing")) {
+        rex::cvar::SetFlagByName("d3d12_present_adaptive_tearing", "true");
+      }
     }
+    // El modo de video del guest fija el aspecto de lo que renderiza el juego.
+    // En un monitor ultrawide, si se queda en 16:9 el presenter tiene que poner
+    // bandas a los lados; ajustandolo al aspecto de la ventana/pantalla el juego
+    // renderiza 21:9 nativo y llena la pantalla. Solo se toca el ANCHO: el alto
+    // (la resolucion interna real) lo elige el usuario.
+    ApplyDesiredAspect();
     // Red de seguridad: si el toml trae un resolution_scale que dispara el
     // ancho de render por encima del limite seguro con ROV (p.ej. 2x a 1080p =
     // 3840 px), la GPU se satura y Windows lo marca como "no responde". Lo
@@ -175,18 +198,241 @@ class SplatterhouseApp : public rex::ReXApp {
                   rex::cvar::Query<bool>("d3d12_allow_variable_refresh_rate_and_tearing"),
                   rex::cvar::Query<int32_t>("resolution_scale"));
     }
+    // Lo aplicado aqui (y lo cargado del toml) ya esta activo en esta sesion:
+    // que no aparezca como "pendiente de reinicio" en la pantalla F5.
+    rex::cvar::ClearPendingRestartFlags();
   }
 
-  // Ruta de datos del juego: assets/ junto al exe (o override con
-  // --game_data_root / REXCVAR_game_data_root).
-  void OnConfigurePaths(rex::PathConfig& paths) override {
-    if (paths.game_data_root.empty()) {
-      std::filesystem::path candidate =
-          rex::filesystem::GetExecutableFolder() / "assets";
-      if (std::filesystem::is_directory(candidate)) {
-        paths.game_data_root = candidate;
+  // Ajusta el ASPECTO del modo de video del guest al de la ventana/pantalla.
+  // Cvar `sh_aspect`: auto (defecto), 16:9, 21:9, 32:9 o keep (no tocar).
+  void ApplyDesiredAspect() {
+    std::string mode = rex::cvar::Query<std::string>("sh_aspect");
+    if (mode == "keep") {
+      return;
+    }
+    double target_aspect = 0.0;
+    if (mode == "16:9") {
+      target_aspect = 16.0 / 9.0;
+    } else if (mode == "21:9") {
+      target_aspect = 21.0 / 9.0;
+    } else if (mode == "32:9") {
+      target_aspect = 32.0 / 9.0;
+    } else {
+      // auto: aspecto de la ventana; si aun no tiene tamano, el del escritorio.
+      uint32_t width = 0;
+      uint32_t height = 0;
+      if (window()) {
+        width = window()->GetActualPhysicalWidth();
+        height = window()->GetActualPhysicalHeight();
+      }
+#if defined(_WIN32)
+      if (!width || !height) {
+        width = uint32_t(std::max(1, GetSystemMetrics(SM_CXSCREEN)));
+        height = uint32_t(std::max(1, GetSystemMetrics(SM_CYSCREEN)));
+      }
+#endif
+      if (!width || !height) {
+        return;
+      }
+      target_aspect = double(width) / double(height);
+    }
+    if (target_aspect <= 0.0) {
+      return;
+    }
+    const int32_t width = std::max(1, rex::cvar::Query<int32_t>("video_mode_width"));
+    const int32_t height = std::max(1, rex::cvar::Query<int32_t>("video_mode_height"));
+    const double current_aspect = double(width) / double(height);
+    // Margen para no reescribir modos ya equivalentes (2560x1080 en un 21:9).
+    if (std::fabs(current_aspect - target_aspect) < 0.03) {
+      return;
+    }
+    int32_t new_width = int32_t(std::lround(double(height) * target_aspect / 8.0) * 8.0);
+    new_width = std::clamp(new_width, 640, 4095);
+    if (new_width <= 0) {
+      return;
+    }
+    rex::cvar::SetFlagByName("video_mode_width", std::to_string(new_width));
+    rex::cvar::SetFlagByName("video_mode_height", std::to_string(height));
+    REXLOG_INFO("[sh-aspect] {}: modo interno {}x{} (antes {}x{}, pantalla {:.2f}:1)", mode,
+                new_width, height, width, height, target_aspect);
+  }
+
+  // Ruta de datos del juego: el contenido de la ISO (default.xex + data\) junto
+  // al exe o en assets\ equivalente.
+  // El instalador deja el contenido en assets\, pero tambien se aceptan:
+  // - el propio directorio del exe (layout de desarrollo),
+  // - una ISO extraida a mano sin aplanar: assets\<carpeta de la ISO>\.
+  //
+  // Y se valida el contenido antes de arrancar. Sin esto, si faltan assets el
+  // guest sigue hasta el UI, no encuentra localizacion/SWF y peta con un AV
+  // opaco (pantalla negra + cierre), que es lo que reporta la issue #4.
+  static bool HasGameXex(const std::filesystem::path& root) {
+    std::error_code ec;
+    return std::filesystem::is_regular_file(root / "default.xex", ec) ||
+           std::filesystem::is_regular_file(root / "default.dec.xex", ec);
+  }
+
+  static bool LooksLikeGameDataRoot(const std::filesystem::path& root) {
+    std::error_code ec;
+    return std::filesystem::is_directory(root, ec) && HasGameXex(root) &&
+           std::filesystem::is_directory(root / "data", ec);
+  }
+
+  static bool HasLocalizationDatabase(const std::filesystem::path& root) {
+    std::error_code ec;
+    for (const auto& entry :
+         std::filesystem::directory_iterator(root / "data" / "localization", ec)) {
+      if (ec) {
+        return false;
+      }
+      if (entry.is_regular_file(ec) && entry.path().extension() == ".xml") {
+        return true;
       }
     }
+    return false;
+  }
+
+  // Devuelve la raiz que contiene el juego, o vacia si no hay ninguna.
+  static std::filesystem::path FindGameDataRoot(const std::filesystem::path& explicit_root) {
+    if (!explicit_root.empty()) {
+      return explicit_root;
+    }
+    const std::filesystem::path exe_dir = rex::filesystem::GetExecutableFolder();
+    const std::filesystem::path assets_dir = exe_dir / "assets";
+    for (const std::filesystem::path& candidate : {assets_dir, exe_dir}) {
+      if (LooksLikeGameDataRoot(candidate)) {
+        return candidate;
+      }
+    }
+    // ISO extraida dentro de assets sin aplanar (hasta 2 niveles).
+    std::vector<std::filesystem::path> pending = {assets_dir};
+    for (int depth = 0; depth < 2 && !pending.empty(); ++depth) {
+      std::vector<std::filesystem::path> next;
+      for (const std::filesystem::path& dir : pending) {
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+          if (ec) {
+            break;
+          }
+          if (!entry.is_directory(ec)) {
+            continue;
+          }
+          if (LooksLikeGameDataRoot(entry.path())) {
+            return entry.path();
+          }
+          next.push_back(entry.path());
+        }
+      }
+      pending = std::move(next);
+    }
+    return {};
+  }
+
+  // Motivo por el que la raiz no sirve, o cadena vacia si esta completa.
+  static std::string ValidateGameDataRoot(const std::filesystem::path& root) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(root, ec)) {
+      return "no existe la carpeta";
+    }
+    if (!HasGameXex(root)) {
+      return "falta default.xex (el ejecutable del juego)";
+    }
+    if (!std::filesystem::is_directory(root / "data", ec)) {
+      return "falta la carpeta data\\";
+    }
+    if (!HasLocalizationDatabase(root)) {
+      return "falta data\\localization\\<idioma>.xml";
+    }
+    if (!std::filesystem::is_directory(root / "data" / "swf", ec)) {
+      return "falta data\\swf\\ (la interfaz del juego)";
+    }
+    return {};
+  }
+
+  // Muestra el problema y termina. Antes de esto el guest arrancaba sin datos y
+  // moria con "write of guest 0x00000008" (issue #4); mejor un mensaje claro.
+  [[noreturn]] static void ReportMissingGameData(const std::filesystem::path& root,
+                                                 const std::string& problem) {
+    // MessageBoxW no ajusta lineas largas (y con DPI alto recorta): se parte el
+    // texto a mano para que el mensaje siempre se lea entero.
+    auto wrap = [](const std::string& text, size_t max_length) {
+      std::string wrapped;
+      size_t line_length = 0;
+      for (const char c : text) {
+        if (c == '\n') {
+          wrapped += c;
+          line_length = 0;
+          continue;
+        }
+        if (line_length >= max_length) {
+          wrapped += "\n  ";
+          line_length = 2;
+        }
+        wrapped += c;
+        ++line_length;
+      }
+      return wrapped;
+    };
+    // MessageBoxW se queda corto con DPI alto (aquí aún no hay ventana SDL ni
+    // awareness de DPI), así que en el diálogo va un resumen corto y el detalle
+    // completo (rutas incluidas) se escribe junto al exe.
+    const std::filesystem::path expected = rex::filesystem::GetExecutableFolder() / "assets";
+    const std::string detail = fmt::format(
+        "No se encuentran los datos del juego.\n\n"
+        "Carpeta comprobada:\n{}\n\n"
+        "Problema: {}\n\n"
+        "Arrastra la ISO sobre install.bat, o deja el contenido de la ISO\n"
+        "(default.xex y la carpeta data) en:\n{}\n\n"
+        "Tambien puedes indicar la ruta en splatterhouse.toml\n"
+        "(game_data_root = \"...\") o con --game_data_root.\n",
+        wrap(root.string(), 76), wrap(problem, 76), wrap(expected.string(), 76));
+    std::ofstream report(rex::filesystem::GetExecutableFolder() / "assets_error.txt",
+                         std::ios::trunc);
+    if (report) {
+      report << detail;
+    }
+#if defined(_WIN32)
+    // El dialogo de Windows recorta el texto con DPI alto y aqui aun no hay
+    // ventana SDL, asi que se muestra en una consola (que ademas es donde
+    // aparece el log del juego).
+    if (AllocConsole()) {
+      SetConsoleTitleA("Splatterhouse - error de instalacion");
+      FILE* out = nullptr;
+      if (freopen_s(&out, "CONOUT$", "w", stdout) != 0) {
+        out = nullptr;
+      }
+      FILE* in = nullptr;
+      if (freopen_s(&in, "CONIN$", "r", stdin) != 0) {
+        in = nullptr;
+      }
+      std::fputs(detail.c_str(), stdout);
+      std::fputs("\nPulsa Enter para salir...\n", stdout);
+      std::fflush(stdout);
+      std::getchar();
+      std::_Exit(1);
+    }
+#endif
+    rex::ShowSimpleMessageBox(rex::SimpleMessageBoxType::Error,
+                              "No se encuentran los datos de Splatterhouse. "
+                              "Ejecuta install.bat con la ISO, o deja default.xex "
+                              "y la carpeta data en assets. Detalles en "
+                              "assets_error.txt, junto al ejecutable.");
+    std::_Exit(1);
+  }
+
+  void OnConfigurePaths(rex::PathConfig& paths) override {
+    const std::filesystem::path root = FindGameDataRoot(paths.game_data_root);
+    if (root.empty()) {
+      ReportMissingGameData(rex::filesystem::GetExecutableFolder() / "assets",
+                            "no hay default.xex ni data\\");
+    }
+    if (!REXCVAR_GET(sh_skip_assets_check)) {
+      const std::string problem = ValidateGameDataRoot(root);
+      if (!problem.empty()) {
+        ReportMissingGameData(root, problem);
+      }
+    }
+    paths.game_data_root = root;
   }
 
   // Dump de la imagen guest (XEX cargado) para analisis estatico:
@@ -314,9 +560,9 @@ void QuitGame() {
   std::filesystem::path graphics_config_path_;
 
   // Instala paquetes DLC (STFS: CON/LIVE/PIRS) que el usuario haya dejado en la
-  // carpeta de datos del usuario, para que el engine los vea via XamContent.
-  // Se buscan en varias ubicaciones (la del xuid del perfil, el xuid comun
-  // 0000000000000000, y la raiz).
+  // carpeta de datos del usuario o en dlc\ junto al exe, para que el engine los
+  // vea via XamContent. Se buscan en varias ubicaciones (la del xuid del perfil,
+  // el xuid comun 0000000000000000, y la raiz).
   void InstallDlcPackages() {
     auto* kernel_state = rex::runtime::current_kernel_state();
     if (!kernel_state || !kernel_state->content_manager()) {
@@ -337,12 +583,24 @@ void QuitGame() {
       }
       candidates.push_back(entry.path() / title_str / "00000002");
     }
+    // Carpeta facil de encontrar para el usuario: <exe>\dlc.
+    const std::filesystem::path exe_dlc =
+        rex::filesystem::GetExecutableFolder() / "dlc";
+    candidates.push_back(exe_dlc);
+    // Se crean las carpetas para que el usuario sepa donde dejar los paquetes.
+    for (const auto& dir : candidates) {
+      std::error_code create_ec;
+      std::filesystem::create_directories(dir, create_ec);
+    }
     uint32_t total = 0;
     for (const auto& dir : candidates) {
       total += kernel_state->content_manager()->InstallContentFromDirectory(dir);
     }
     if (total) {
-      REXLOG_INFO("[sh-dlc] Instalados {} paquete(s) DLC desde la carpeta de usuario", total);
+      REXLOG_INFO("[sh-dlc] Instalados {} paquete(s) DLC", total);
+    } else {
+      REXLOG_INFO("[sh-dlc] Sin paquetes DLC. Deja los paquetes (CON/PIRS/LIVE) en {}",
+                  exe_dlc.string());
     }
   }
 
