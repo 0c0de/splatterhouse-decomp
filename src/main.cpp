@@ -31,6 +31,18 @@ REXCVAR_DEFINE_BOOL(sh_60fps, true, "Graphics",
 REXCVAR_DEFINE_BOOL(sh_graphics_menu, false, "Graphics",
     "Open the graphics menu on startup (testing)");
 
+// Arranque sin validar la carpeta de datos (avanzado: layouts no estandar).
+REXCVAR_DEFINE_BOOL(sh_skip_assets_check, false, "System",
+    "Skip the game data folder validation on startup");
+
+// Aspecto del modo de video interno. "auto" lo iguala al de la ventana/pantalla,
+// de modo que en un monitor ultrawide el juego renderiza 21:9 nativo (sin
+// bandas negras a los lados). "keep" no toca el modo del toml.
+REXCVAR_DEFINE_STRING(sh_aspect, "auto", "Display",
+    "Internal video mode aspect: auto, 16:9, 21:9, 32:9 (keep = as configured)")
+    .allowed({"auto", "16:9", "21:9", "32:9", "keep"})
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
 // Dev: carga directa de nivel (para calentar la cache de shaders por
 // capitulos). La consume el runtime (VdSwap) y se limpia sola.
 REXCVAR_DEFINE_STRING(sh_warp, "", "System",

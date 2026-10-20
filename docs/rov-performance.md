@@ -116,6 +116,39 @@ Created 401 graphics pipelines (not including reading the descriptions) from the
 - **Distribuir la caché**: jugar una vez → `tools\pack_shadercache.bat` copia `%MyDocuments%\splatterhouse\cache\shaders\shareable\*` a `shadercache\` del release; `install.bat` los instala al usuario. Con la caché completa, los PSO se crean **en el arranque** (una vez) y no durante el juego.
 - Opcional (per-machine, no distribuible): `ID3D12PipelineLibrary` para guardar los blobs compilados por el driver y que el prewarm sea casi instantáneo en ejecuciones posteriores.
 
+## 3d. Perfil medido del combate (`sh_render_profile`)
+
+Instrumentación opt-in en el command processor D3D12 (log `[sh-render]`): agrega
+por intervalo draws, por par VS/PS (hash de ucode), por tipo de primitiva y por
+"pase" (formatos de color + base de color0 + pitch de superficie + msaa + base y
+formato de profundidad), con un proxy de coste por píxel (área de scissor
+acumulada). Se activa con:
+
+```toml
+sh_render_profile = true
+sh_render_profile_interval_s = 2.0   # cada cuánto vuelca el resumen
+sh_render_profile_top = 8            # nº de entradas top a listar
+```
+
+Medido (RTX 5060 Ti, 1080p, D3D12+ROV, gameplay real):
+
+| Escena | draws/frame | verts/frame | pases dominantes |
+|---|---|---|---|
+| Frontend/menú | ~75 | ~0.4k | 1 pase principal (pitch 1040, 2x MSAA) |
+| **Combate (3+ enemigos)** | **hasta ~1350** | **hasta ~1.1M** | escena principal (~850 d/f) + **profundidad/sombras** (~475 d/f) |
+
+- Primitivas: dominan las **triangle lists** (`0x4`).
+- Shaders del pase de profundidad (VS-sin-PS): `4B7396D6DA4F3D08`, `2EE71F998E3C653F`,
+  `8A4840C848499397`, `B6C9863F710683EC`, `007A49CEB83DEFD0`.
+- En la RTX 5060 Ti el swap se mantiene ~60 (mín 30); el "slideshow" lo reportan
+  GPUs **AMD** (RX 9070 XT / RX 7800 XT), donde el interlock (ROV) es mucho más caro.
+
+**Objetivo**: abaratar el OM software de la ruta ROV en **los dos pases** (el de
+color de la escena y el depth-only de sombras), no solo las sombras. En ROV, los
+draws sin PS usan `depth_only_pixel_shader_` (`dxbc_translator_om.cpp`,
+`CompletePixelShader`), que hace el test/escritura de profundidad en el shader
+bajo interlock.
+
 ## 4. Wins parciales (más baratos)
 
 - Especializar solo los combos más frecuentes (p.ej. RT `k_8_8_8_8`, 1 RT, sin
@@ -148,6 +181,71 @@ Presets en la pantalla de gráficos del port (tecla **F5**):
 
 - cvar `sh_log_fps` → log `[sh-fps] guest N FPS` cada 2 s (plugin GPU).
 - Overlay de debug del runtime (F3) → FPS.
+
+## 7. Reportes de AMD/Intel (issue #3) y qué se puede hacer hoy
+
+Reportes de la issue #3: **RX 9070 XT, RX 7800 XT y Arc B580** — en pasillos van
+bien, pero **en combate con ≥2 enemigos va a saltos**; el mismo usuario confirma
+que forzando **Vulkan** el combate va fluido.
+
+- **Confirmado**: no es CPU (medido: 1–5 % de 12 núcleos) ni un bug del port. Es
+  el **interlock de la ruta ROV en D3D12**, que en AMD/Intel es
+  desproporcionadamente caro con **overdraw** (combate: personajes y partículas
+  solapándose) y con **dos pases** (color ~850 draws + profundidad/sombras ~475).
+  En NVIDIA el mismo workload sostiene 60 FPS.
+- **Vulkan (FSI) no es la solución todavía**: es rápido en combate (su interlock
+  es nativo), pero hoy renderiza **globalmente más oscuro** y en algunas escenas
+  saca **capas negras/opacas**; ademas `present_effect=fsr` no aplica. Queda como
+  vía de futuro (arreglar gamma + estabilidad), no como default.
+- **RTV no vale**: arreglaría el rendimiento pero **rompe la iluminación** (es la
+  limitación de diseño de la ruta RTV, ver §1).
+
+**Mitigación entregada (2026-10)**: el coste de ROV escala con píxeles, así que
+la palanca es la **resolución interna**:
+
+| GPU | Resolución interna por defecto del instalador | Píxeles vs 1080p |
+|---|---|---|
+| AMD / Intel | 1280x720 + FSR | ~0.44x |
+| NVIDIA | 1920x1080 + FSR | 1x |
+
+`install.bat` detecta el nombre de la GPU (`Win32_VideoController`) y escribe el
+`splatterhouse.toml` con 720p en AMD/Intel. En la pantalla **F5** se puede subir
+o bajar en caliente con **Preset** (Bajo 960x540 … Ultra 1920x1080) o con
+**Resolucion interna**; el preset conserva el aspecto (16:9, 21:9…).
+
+Si aún no llega: bajar a **960x540** (0.25x píxeles respecto a 1080p) o limitar
+a **30 FPS** (`Limite de FPS`), que con el limiter es estable y no cae a tirones.
+
+## 8. Por qué el FPS saltaba 60 ↔ 30 (y el fix)
+
+Síntoma reportado: en combate el juego pasa de 60 a 30 y vuelve, sin valores
+intermedios. Los logs (`[sh-swap]`) lo confirman: la serie es **bimodal**
+(60/61 y 30/31, con 1 s suelto de 38–55 en las transiciones).
+
+- **No era doble buffer**: el swapchain es `DXGI_SWAP_EFFECT_FLIP_DISCARD` con
+  **3 buffers** (`D3D12Presenter::PaintContext::kSwapChainBufferCount`) y el
+  command processor permite **3 frames en cola** (`kQueueFrames = 3`).
+- **Causa**: el `Present(0, …)` **sin** `ALLOW_TEARING` se sincroniza con el
+  vblank. Un frame que tarda 17 ms espera al siguiente vblank (33 ms), y como el
+  siguiente vuelve a pasarse, el juego se queda **clavado en 30** (mitad de
+  vblank) hasta que la carga baja. El limiter de 60 no lo evita: solo reparte
+  los presents dentro de esa rejilla.
+- **Fix**: **tearing adaptativo** (`d3d12_present_adaptive_tearing=true` por
+  defecto). El swapchain se crea siempre con `ALLOW_TEARING` (si DXGI lo
+  soporta) y el presenter mide lo que tarda el frame en estar listo (desde que
+  volvió el present anterior hasta antes de esperar al limiter, con suavizado y
+  histeresis): si está por encima de **0.95 × 16.6 ms** pasa
+  `DXGI_PRESENT_ALLOW_TEARING` (no bloquea → 58, 52, 45… progresivo); si hay
+  margen (<0.80 ×) lo quita y el present va sincronizado al vblank.
+  - **A 60 FPS no hay desgarro** (el present vuelve a estar sincronizado). Antes
+    de este ajuste se pasaba `ALLOW_TEARING` en *todos* los frames, y como el
+    limiter de 60 deja los presents justo después del vblank, se veía una línea
+    de desgarro en la **parte superior** de la pantalla.
+  - Por debajo de 60 sí puede haber algo de desgarro puntual: es el precio de no
+    clavarse en 30. Con **VRR/G-Sync** (`d3d12_allow_variable_refresh_rate_and_tearing=true`,
+    "siempre (VRR)") no se ve ninguno.
+  - Para el comportamiento antiguo (60/30 sin desgarro): las dos cvars a `false`
+    (F5 → **Tearing / VRR** → *desactivado (60/30)*).
 
 ## Referencias
 
