@@ -1,9 +1,9 @@
-﻿// Splatterhouse (2010) port - pantalla de opciones graficas dentro del juego.
+﻿// Splatterhouse (2010) port - in-game graphics options screen.
 //
-// Pantalla completa con el estilo del juego (fondo oscuro, rojo/crema), NO una
-// ventana flotante. Se abre/cierra con el keybind "bind_graphics" (F5 por
-// defecto, reasignable desde el overlay de ajustes del runtime). Escribe las
-// cvars del port y las persiste en splatterhouse.toml con "Guardar".
+// Full screen in the game's style (dark background, red/cream), NOT a floating
+// window. Opened/closed with the "bind_graphics" keybind (F5 by default,
+// rebindable from the runtime settings overlay). Writes the port's cvars and
+// persists them to splatterhouse.toml with "Save".
 
 #pragma once
 
@@ -16,6 +16,8 @@
 #include <functional>
 #include <set>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <imgui.h>
@@ -25,8 +27,8 @@
 
 class GraphicsMenuDialog;
 
-// El dialogo se registra en el ImGuiDrawer al construirse y se auto-borra al
-// llamar Close(). Este puntero global permite al keybind abrirlo/cerrarlo.
+// The dialog registers itself with the ImGuiDrawer when constructed and deletes
+// itself when Close() is called. This global pointer lets the keybind open/close it.
 inline GraphicsMenuDialog* g_graphics_menu = nullptr;
 
 class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
@@ -38,10 +40,10 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
         quit_(std::move(quit)) {
     g_graphics_menu = this;
     BuildRows();
-    // El preset que se muestra sale de la configuracion actual (antes ponia
-    // siempre "Ultra" aunque el toml tuviera otra cosa).
+    // The displayed preset is derived from the current configuration (it used to
+    // always show "Ultra" even when the toml said otherwise).
     preset_index_ = DetectPresetIndex();
-    // La primera fila es un titulo de seccion: empezar en algo seleccionable.
+    // The first row is a section title: start on something selectable.
     selected_ = NextSelectable(0, +1);
   }
   ~GraphicsMenuDialog() override {
@@ -52,12 +54,13 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
 
   void RequestClose() { Close(); }
 
-  // El teclado no se lee de ImGui: las teclas las recibe nuestro propio
-  // WindowInputListener (z-order 128, el mismo que ya captura F5 antes que el
-  // ImGuiDrawer), que las encola aqui y el menu consume al dibujarse. Asi el
-  // menu no depende de que ImGui tenga el foco ni de io.WantCaptureKeyboard.
+  // The keyboard is not read from ImGui: keys are received by our own
+  // WindowInputListener (z-order 128, the same one that already catches F5 before
+  // the ImGuiDrawer), which queues them here and the menu consumes them when it
+  // draws. That way the menu doesn't depend on ImGui having focus or on
+  // io.WantCaptureKeyboard.
   void PushKey(rex::ui::VirtualKey key) {
-    // El autorepeat del sistema reenvia la pulsacion; solo interested la primera.
+    // System autorepeat resends the keypress; only the first one matters.
     if (keys_down_.insert(key).second) {
       pending_keys_.push_back(key);
     }
@@ -84,20 +87,20 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     HandleInput(io, io.MousePos.x >= panel_x && io.MousePos.x <= panel_x + panel_w &&
                        io.MousePos.y >= 60.0f * scale);
 
-    // Texto mas grande: se escala la fuente de todo el menu.
+    // Larger text: the font of the whole menu is scaled.
     const float font_scale = 1.7f;
 
     ImGui::SetCursorPos(ImVec2(panel_x, 70.0f * scale));
     ImGui::SetWindowFontScale(2.6f);
-    ImGui::TextColored(kAccent, "OPCIONES");
+    ImGui::TextColored(kAccent, "%s", L("OPTIONS"));
     ImGui::SetWindowFontScale(font_scale);
     ImGui::SetCursorPosX(panel_x);
-    ImGui::TextColored(kDim, "Splatterhouse - opciones del port");
+    ImGui::TextColored(kDim, "%s", L("Splatterhouse - port options"));
 
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 24.0f * scale);
 
-    // Con ~30 filas no caben todas: se dibuja solo la ventana que cabe y se
-    // mantiene la seleccion a la vista.
+    // With ~30 rows they don't all fit: only the window that fits is drawn and
+    // the selection is kept in view.
     const float row_h = ImGui::GetTextLineHeight() + 12.0f * scale;
     const float list_top = ImGui::GetCursorPosY();
     const float list_bottom = io.DisplaySize.y - 116.0f * scale;
@@ -121,7 +124,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
 
       if (row.header) {
         ImGui::SetCursorPosX(panel_x);
-        ImGui::TextColored(kAccent, "-- %s", row.label.c_str());
+        ImGui::TextColored(kAccent, "-- %s", L(row.label.c_str()));
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12.0f * scale);
         continue;
       }
@@ -131,7 +134,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
 
       ImGui::SameLine(panel_x + 34.0f * scale * font_scale);
       ImGui::TextColored(selected ? (row.danger ? kAccent : kText) : (row.danger ? kDim : kTextDim),
-                         "%s", row.label.c_str());
+                         "%s", L(row.label.c_str()));
 
       ImGui::SameLine(panel_x + panel_w * 0.58f);
       const std::string value = row.get();
@@ -139,7 +142,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
                          value.c_str(), selected ? ">" : " ");
       if (row.restart) {
         ImGui::SameLine();
-        ImGui::TextColored(kDim, " [reinicio]");
+        ImGui::TextColored(kDim, "%s", L(" [restart]"));
       }
 
       if (ImGui::IsMouseHoveringRect(ImVec2(panel_x, ImGui::GetItemRectMin().y - 3.0f * scale),
@@ -150,9 +153,9 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
       ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12.0f * scale);
     }
 
-    // El hover SOLO mueve la seleccion si el raton se ha movido de verdad. Si se
-    // reasignara cada frame, dejaria fijada la fila bajo el cursor y el teclado
-    // y la rueda no harian nada (que es como estaba antes).
+    // Hover ONLY moves the selection if the mouse has actually moved. If it were
+    // reassigned every frame, the row under the cursor would stay pinned and the
+    // keyboard and wheel would do nothing (which is how it used to be).
     const bool mouse_moved = io.MousePos.x != last_mouse_.x || io.MousePos.y != last_mouse_.y;
     last_mouse_ = io.MousePos;
     if (mouse_moved && hovered_ >= 0 && hovered_ != selected_) {
@@ -182,11 +185,11 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     bool header = false;
   };
 
-  // Una fila solo se pinta si su cvar existe: algunas opciones dependen de como
-  // se compilo el runtime (p.ej. la calidad FSR solo existe con FidelityFX) o de
-  // que el plugin de GPU este cargado. GetFlagByName devuelve "" si no esta
-  // registrado, asi que sin este filtro el menu ofreceria valores que luego se
-  // rechazan al escribirlos.
+  // A row is only drawn if its cvar exists: some options depend on how the
+  // runtime was compiled (e.g. FSR quality only exists with FidelityFX) or on the
+  // GPU plugin being loaded. GetFlagByName returns "" if it isn't registered, so
+  // without this filter the menu would offer values that are then rejected when
+  // written.
   static bool Available(const char* name) {
     return rex::cvar::GetFlagInfo(name) != nullptr;
   }
@@ -196,7 +199,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
   bool IsSelectable(int index) const {
     return index >= 0 && index < static_cast<int>(rows_.size()) && !rows_[index].header;
   }
-  // Navegacion que salta los titulos de seccion.
+  // Navigation that skips section titles.
   int NextSelectable(int from, int delta) const {
     const int count = static_cast<int>(rows_.size());
     for (int step = 1; step <= count; ++step) {
@@ -212,8 +215,8 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     if (rows_.empty()) {
       return;
     }
-    // Teclas encoladas por el listener de la ventana (fuente fiable: no depende
-    // del foco de ImGui).
+    // Keys queued by the window listener (reliable source: doesn't depend on
+    // ImGui focus).
     for (const rex::ui::VirtualKey key : pending_keys_) {
       switch (key) {
         case rex::ui::VirtualKey::kEscape:
@@ -249,8 +252,8 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     }
     pending_keys_.clear();
 
-    // Rueda: mueve la seleccion. Antes se ignoraba salvo sobre la ultima fila
-    // visible porque el hover reasignaba selected_ cada frame.
+    // Wheel: moves the selection. It used to be ignored except over the last
+    // visible row because hover reassigned selected_ every frame.
     if (mouse_in_panel && io.MouseWheel != 0.0f) {
       selected_ = NextSelectable(selected_, io.MouseWheel < 0.0f ? +1 : -1);
     }
@@ -260,8 +263,8 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     }
   }
 
-  // Cambiar la fila seleccionada no es "cambio sin guardar" cuando la fila es la
-  // de salida del juego (ChangeQuit ya guarda lo que haya).
+  // Changing the selected row isn't an "unsaved change" when the row is the quit
+  // row (ChangeQuit already saves whatever is pending).
   void MarkDirty() {
     if (selected_ != quit_row_) {
       dirty_ = true;
@@ -272,20 +275,20 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     ImGui::SetWindowFontScale(font_scale);
     ImGui::SetCursorPos(ImVec2(panel_x, io.DisplaySize.y - 92.0f * scale));
     const int count = static_cast<int>(rows_.size());
-    std::string hint = "Flechas: navegar/cambiar   S: guardar   Esc/F5: cerrar";
+    std::string hint = L("Arrows: navigate/change   S: save   Esc/F5: close");
     if (dirty_) {
-      hint += "   (cambios sin guardar)";
+      hint += L("   (unsaved changes)");
     }
     if (count > visible_rows_) {
       char buffer[64];
-      std::snprintf(buffer, sizeof(buffer), "   [%d-%d de %d, rueda para_scroll]",
+      std::snprintf(buffer, sizeof(buffer), L("   [%d-%d of %d, wheel to scroll]"),
                     first_row_ + 1, std::min(count, first_row_ + visible_rows_), count);
       hint += buffer;
     }
     ImGui::TextColored(kDim, "%s", hint.c_str());
     if (saved_flash_ > 0.0f) {
       ImGui::SetCursorPosX(panel_x);
-      ImGui::TextColored(kAccent, "Guardado en %s", config_path_.filename().string().c_str());
+      ImGui::TextColored(kAccent, L("Saved to %s"), config_path_.filename().string().c_str());
     }
     const std::vector<std::string> pending = rex::cvar::GetPendingRestartFlags();
     if (!pending.empty()) {
@@ -297,12 +300,85 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
         names += pending[i];
       }
       ImGui::SetCursorPosX(panel_x);
-      ImGui::TextColored(kDim, "Reiniciar para aplicar: %s", names.c_str());
+      ImGui::TextColored(kDim, L("Restart to apply: %s"), names.c_str());
     }
     if (quit_armed_) {
       ImGui::SetCursorPosX(panel_x);
-      ImGui::TextColored(kAccent, "? Salir del juego: Si = Derecha/Enter/click, No = Izquierda");
+      ImGui::TextColored(kAccent, "%s", L("? Quit game: Yes = Right/Enter/click, No = Left"));
     }
+  }
+
+  // Menu text is written in English and translated at draw time when
+  // sh_menu_language is "spanish", so switching takes effect immediately.
+  static const char* L(const char* english) {
+    if (!Available("sh_menu_language") || QueryString("sh_menu_language") != "spanish") {
+      return english;
+    }
+    static const std::unordered_map<std::string_view, const char*> kSpanish = {
+        {"OPTIONS", "OPCIONES"},
+        {"Splatterhouse - port options", "Splatterhouse - opciones del port"},
+        {" [restart]", " [reinicio]"},
+        {"Arrows: navigate/change   S: save   Esc/F5: close",
+         "Flechas: navegar/cambiar   S: guardar   Esc/F5: cerrar"},
+        {"   (unsaved changes)", "   (cambios sin guardar)"},
+        {"   [%d-%d of %d, wheel to scroll]", "   [%d-%d de %d, rueda para scroll]"},
+        {"Saved to %s", "Guardado en %s"},
+        {"Restart to apply: %s", "Reiniciar para aplicar: %s"},
+        {"? Quit game: Yes = Right/Enter/click, No = Left",
+         "? Salir del juego: Si = Derecha/Enter/click, No = Izquierda"},
+        {"Interface", "Interfaz"},
+        {"Menu language", "Idioma del menu"},
+        {"Image", "Imagen"},
+        {"Internal resolution", "Resolucion interna"},
+        {"Internal aspect", "Aspecto interno"},
+        {"Draw scale", "Escala de dibujo"},
+        {"Render path", "Ruta de render"},
+        {"Upscaling and presentation", "Reescalado y presentacion"},
+        {"Presentation", "Presentacion"},
+        {"FSR quality", "Calidad FSR"},
+        {"Sharpness (FSR)", "Nitidez (FSR)"},
+        {"Presentation antialiasing", "Antialias presentacion"},
+        {"Display", "Pantalla"},
+        {"Fullscreen", "Pantalla completa"},
+        {"Window size", "Tamano ventana"},
+        {"Refresh rate", "Frecuencia"},
+        {"FPS limit", "Limite de FPS"},
+        {"Quality", "Calidad"},
+        {"Texture cache (MB)", "Cache de texturas (MB)"},
+        {"Native 2x MSAA", "MSAA 2x nativo"},
+        {"Anisotropic filtering", "Filtro anisotropico"},
+        {"Performance", "Rendimiento"},
+        {"Background shaders", "Shaders en segundo plano"},
+        {"Non-blocking PSO", "PSO sin bloqueos"},
+        {"PSO creation threads", "Hilos para crear PSO"},
+        {"Game", "Juego"},
+        {"60 FPS patch", "Parche 60 FPS"},
+        {"Unlock levels", "Desbloquear niveles"},
+        {"Max level", "Nivel maximo"},
+        {"Game language", "Idioma del juego"},
+        {"Input and audio", "Entrada y audio"},
+        {"Input backend", "Backend de input"},
+        {"Max rumble (ms)", "Vibracion maxima (ms)"},
+        {"Mute", "Silenciar"},
+        {"Development", "Desarrollo"},
+        {"Level warp (dev)", "Warp nivel (dev)"},
+        {"Quit game", "Salir del juego"},
+        {"Low", "Bajo"},
+        {"Medium", "Medio"},
+        {"High", "Alto"},
+        {"Custom", "Personalizado"},
+        {"on", "activado"},
+        {"off", "desactivado"},
+        {"automatic", "automatico"},
+        {"always (VRR)", "siempre (VRR)"},
+        {"auto (only below 60)", "auto (solo si baja de 60)"},
+        {"off (60/30)", "desactivado (60/30)"},
+        {"unavailable", "no disponible"},
+        {"confirm (Yes/No)", "confirmar (Si/No)"},
+        {"press to quit", "pulsar para salir"},
+    };
+    const auto it = kSpanish.find(english);
+    return it != kSpanish.end() ? it->second : english;
   }
 
   static std::string QueryString(const char* name) {
@@ -335,8 +411,8 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     std::snprintf(buffer, sizeof(buffer), "%.3f", value);
     SetString(name, buffer);
   }
-  // Ciclo sobre valores enteros escritos como texto (los cvars int32 se guardan
-  // igual en el toml).
+  // Cycle over integer values written as text (int32 cvars are stored the same
+  // way in the toml).
   static void CycleInt(const char* name, const std::vector<int32_t>& values, int delta) {
     const int32_t current = rex::cvar::Query<int32_t>(name);
     int index = 0;
@@ -353,7 +429,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     return std::to_string(rex::cvar::Query<int32_t>(name));
   }
   static std::string OnOff(const char* name) {
-    return std::string(rex::cvar::Query<bool>(name) ? "activado" : "desactivado");
+    return std::string(rex::cvar::Query<bool>(name) ? L("on") : L("off"));
   }
   static std::string FormatPair(const char* name_w, const char* name_h, const char* suffix) {
     char buffer[64];
@@ -376,15 +452,15 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     SetString(name_w, std::to_string(values[index][0]));
     SetString(name_h, std::to_string(values[index][1]));
   }
-  // Presets rapidos para GPUs de distinta potencia. Cambian sobre todo la
-  // resolucion interna (coste GPU) y el limite de la cache de texturas.
-  // Se conserva el aspecto actual (16:9, 21:9...) y solo cambia la resolucion
-  // vertical, para no romper una configuracion ultrawide.
+  // Quick presets for GPUs of different power. They mainly change the internal
+  // resolution (GPU cost) and the texture cache limit.
+  // The current aspect (16:9, 21:9...) is kept and only the vertical resolution
+  // changes, so an ultrawide setup isn't broken.
   static const char* PresetName(int index) {
-    static const char* names[] = {"Bajo", "Medio", "Alto", "Ultra", "Personalizado"};
-    return names[index];
+    static const char* names[] = {"Low", "Medium", "High", "Ultra", "Custom"};
+    return L(names[index]);
   }
-  // Alturas/limites de cache de los presets (el ancho depende del aspecto).
+  // Preset heights/cache limits (the width depends on the aspect).
   static const int* PresetHeights() {
     static const int heights[4] = {540, 720, 900, 1080};
     return heights;
@@ -393,7 +469,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     static const int caches[4] = {256, 512, 768, 1024};
     return caches;
   }
-  // Preset que corresponde a la configuracion actual (4 = Personalizado).
+  // Preset matching the current configuration (4 = Custom).
   static int DetectPresetIndex() {
     if (!Available("video_mode_height") || !Available("texture_cache_memory_limit_soft")) {
       return 4;
@@ -416,8 +492,8 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     const int32_t current_height = std::max(1, rex::cvar::Query<int32_t>("video_mode_height"));
     const double aspect = double(current_width) / double(current_height);
     const int32_t height = heights[index];
-    // Multiplo de 8 (alineacion de RTs del guest) y dentro del limite del video
-    // mode del guest (0x0FFF de ancho).
+    // Multiple of 8 (guest RT alignment) and within the guest video mode limit
+    // (0x0FFF wide).
     int32_t width = int32_t(std::lround(double(height) * aspect / 8.0) * 8.0);
     width = std::clamp(width, 640, 4095);
     SetString("video_mode_width", std::to_string(width));
@@ -436,14 +512,14 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
       return;
     }
     rows_[selected_].change(delta);
-    if (selected_ != preset_row_ && selected_ != quit_row_) {
+    if (selected_ != preset_row_ && selected_ != quit_row_ && selected_ != menu_language_row_) {
       preset_index_ = 4;
     }
   }
 
-  // Fila de salida: dos pasos para no cerrar el juego por error. El primer
-  // cambio la arma ("confirmar"), el segundo (derecha/Enter/click) sale, y
-  // izquierda la desarma.
+  // Quit row: two steps so the game isn't closed by mistake. The first change
+  // arms it ("confirm"), the second (right/Enter/click) quits, and left disarms
+  // it.
   void ChangeQuit(int delta) {
     if (!quit_) {
       return;
@@ -461,7 +537,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
       rex::cvar::SaveConfig(config_path_);
       dirty_ = false;
     }
-    // Close() borra el dialogo, asi que la llamada se copia antes.
+    // Close() deletes the dialog, so the callback is copied first.
     std::function<void()> quit = quit_;
     Close();
     if (quit) {
@@ -477,7 +553,23 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
   }
 
   void BuildRows() {
-    AddHeader("Imagen");
+    if (Available("sh_menu_language")) {
+      AddHeader("Interface");
+      menu_language_row_ = static_cast<int>(rows_.size());
+      rows_.push_back(
+          {"Menu language",
+           [] {
+             return std::string(QueryString("sh_menu_language") == "spanish" ? "Espanol"
+                                                                             : "English");
+           },
+           [](int d) {
+             static const std::vector<std::string> values = {"english", "spanish"};
+             CycleString("sh_menu_language", values, d);
+           },
+           false});
+    }
+
+    AddHeader("Image");
 
     preset_row_ = static_cast<int>(rows_.size());
     rows_.push_back(
@@ -487,21 +579,21 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
          true});
 
     rows_.push_back(
-        {"Resolucion interna",
+        {"Internal resolution",
          [] { return FormatPair("video_mode_width", "video_mode_height", ""); },
          [](int d) {
            static const std::vector<std::array<int32_t, 2>> presets = {
                {640, 360},   {960, 540},   {1280, 720},  {1600, 900},
                {1920, 1080}, {2560, 1080}, {2560, 1440}, {3440, 1440}};
            CyclePair("video_mode_width", "video_mode_height", presets, d);
-           // Eleccion manual: que el ajuste automatico de aspecto no la cambie.
+           // Manual choice: keep the automatic aspect adjustment from changing it.
            SetString("sh_aspect", "keep");
          },
          true});
 
     if (Available("sh_aspect")) {
       rows_.push_back(
-          {"Aspecto interno",
+          {"Internal aspect",
            [] {
              const std::string mode = QueryString("sh_aspect");
              return mode == "keep" ? std::string("manual") : mode;
@@ -518,12 +610,12 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     }
 
     rows_.push_back(
-        {"Escala de dibujo",
+        {"Draw scale",
          [] { return FormatInt("resolution_scale"); },
          [](int d) {
-           // Limitar la escala para que el ancho de render (video_mode_width *
-           // escala) no supere el limite seguro con la ruta ROV. A 1080p, 2x ya
-           // es 3840 px y saturaba la GPU (Application Hang). El tope es 2560.
+           // Limit the scale so the render width (video_mode_width * scale)
+           // doesn't exceed the safe limit with the ROV path. At 1080p, 2x is
+           // already 3840 px and saturated the GPU (Application Hang). The cap is 2560.
            const int32_t width = std::max(1, rex::cvar::Query<int32_t>("video_mode_width"));
            const int max_scale = std::max(1, std::min(4, 2560 / width));
            std::vector<int32_t> values;
@@ -535,7 +627,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
          true});
 
     rows_.push_back(
-        {"Ruta de render",
+        {"Render path",
          [] {
            const std::string path = QueryString("render_target_path_d3d12");
            return path.empty() ? std::string("auto") : path;
@@ -546,10 +638,10 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
          },
          true});
 
-    AddHeader("Reescalado y presentacion");
+    AddHeader("Upscaling and presentation");
 
     rows_.push_back(
-        {"Presentacion",
+        {"Presentation",
          [] { return QueryString("present_effect"); },
          [](int d) {
            static const std::vector<std::string> values = {"bilinear", "cas", "fsr", "fsr2", "fsr3"};
@@ -559,7 +651,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
 
     if (Available("present_fsr_quality_mode")) {
       rows_.push_back(
-          {"Calidad FSR",
+          {"FSR quality",
            [] { return QueryString("present_fsr_quality_mode"); },
            [](int d) {
              static const std::vector<std::string> values = {
@@ -570,14 +662,14 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     }
 
     rows_.push_back(
-        {"Nitidez (FSR)",
+        {"Sharpness (FSR)",
          [] { return FormatValue("present_fsr_sharpness_reduction", ""); },
          [](int d) { CycleDouble("present_fsr_sharpness_reduction", 0.2, 0.0, 2.0, d); },
          true});
 
     if (Available("swap_post_effect")) {
       rows_.push_back(
-          {"Antialias presentacion",
+          {"Presentation antialiasing",
            [] { return QueryString("swap_post_effect"); },
            [](int d) {
              static const std::vector<std::string> values = {"none", "fxaa", "fxaa_extreme"};
@@ -595,22 +687,22 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
                        [](int d) { CycleBool("present_letterbox", d); }, true});
     }
 
-    AddHeader("Pantalla");
+    AddHeader("Display");
 
     rows_.push_back(
-        {"Pantalla completa",
+        {"Fullscreen",
          [] { return OnOff("fullscreen"); },
          [](int d) { CycleBool("fullscreen", d); },
          true});
 
     if (Available("window_width") && Available("window_height")) {
       rows_.push_back(
-          {"Tamano ventana",
+          {"Window size",
            [] {
              const int32_t w = rex::cvar::Query<int32_t>("window_width");
              const int32_t h = rex::cvar::Query<int32_t>("window_height");
              return w > 0 && h > 0 ? FormatPair("window_width", "window_height", "")
-                                   : std::string("automatico");
+                                   : std::string(L("automatic"));
            },
            [](int d) {
              static const std::vector<std::array<int32_t, 2>> sizes = {
@@ -622,7 +714,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     }
 
     rows_.push_back(
-        {"Frecuencia",
+        {"Refresh rate",
          [] {
            char buffer[32];
            std::snprintf(buffer, sizeof(buffer), "%.0f Hz",
@@ -640,10 +732,10 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
         {"VSync", [] { return OnOff("vsync"); }, [](int d) { CycleBool("vsync", d); }, true});
 
     rows_.push_back(
-        {"Limite de FPS",
+        {"FPS limit",
          [] {
            if (!rex::cvar::Query<bool>("d3d12_present_frame_limiter")) {
-             return std::string("desactivado");
+             return std::string(L("off"));
            }
            char buffer[32];
            std::snprintf(buffer, sizeof(buffer), "%d FPS",
@@ -679,11 +771,11 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
           {"Tearing / VRR",
            [] {
              if (rex::cvar::Query<bool>("d3d12_allow_variable_refresh_rate_and_tearing")) {
-               return std::string("siempre (VRR)");
+               return std::string(L("always (VRR)"));
              }
              return std::string(rex::cvar::Query<bool>("d3d12_present_adaptive_tearing")
-                                    ? "auto (solo si baja de 60)"
-                                    : "desactivado (60/30)");
+                                    ? L("auto (only below 60)")
+                                    : L("off (60/30)"));
            },
            [](int d) {
              const bool always =
@@ -704,10 +796,10 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
            true});
     }
 
-    AddHeader("Calidad");
+    AddHeader("Quality");
 
     rows_.push_back(
-        {"Cache de texturas (MB)",
+        {"Texture cache (MB)",
          [] { return FormatInt("texture_cache_memory_limit_soft"); },
          [](int d) {
            static const std::vector<int32_t> values = {128, 256, 384, 512, 768, 1024, 1536, 2048};
@@ -716,20 +808,20 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
          true});
 
     if (Available("native_2x_msaa")) {
-      rows_.push_back({"MSAA 2x nativo", [] { return OnOff("native_2x_msaa"); },
+      rows_.push_back({"Native 2x MSAA", [] { return OnOff("native_2x_msaa"); },
                        [](int d) { CycleBool("native_2x_msaa", d); }, true});
     }
 
     if (Available("anisotropic_override")) {
       rows_.push_back(
-          {"Filtro anisotropico",
+          {"Anisotropic filtering",
            [] {
              const int32_t value = rex::cvar::Query<int32_t>("anisotropic_override");
              if (value < 0) {
-               return std::string("automatico");
+               return std::string(L("automatic"));
              }
              if (value == 0) {
-               return std::string("desactivado");
+               return std::string(L("off"));
              }
              return std::to_string(value) + "x";
            },
@@ -740,24 +832,24 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
            true});
     }
 
-    AddHeader("Rendimiento");
+    AddHeader("Performance");
 
     if (Available("async_shader_compilation")) {
-      rows_.push_back({"Shaders en segundo plano", [] { return OnOff("async_shader_compilation"); },
+      rows_.push_back({"Background shaders", [] { return OnOff("async_shader_compilation"); },
                        [](int d) { CycleBool("async_shader_compilation", d); }, false});
     }
 
     if (Available("sh_pso_async")) {
-      rows_.push_back({"PSO sin bloqueos", [] { return OnOff("sh_pso_async"); },
+      rows_.push_back({"Non-blocking PSO", [] { return OnOff("sh_pso_async"); },
                        [](int d) { CycleBool("sh_pso_async", d); }, false});
     }
 
     if (Available("d3d12_pipeline_creation_threads")) {
       rows_.push_back(
-          {"Hilos para crear PSO",
+          {"PSO creation threads",
            [] {
              const int32_t value = rex::cvar::Query<int32_t>("d3d12_pipeline_creation_threads");
-             return value < 0 ? std::string("automatico") : std::to_string(value);
+             return value < 0 ? std::string(L("automatic")) : std::to_string(value);
            },
            [](int d) {
              static const std::vector<int32_t> values = {-1, 2, 4, 8, 16};
@@ -766,20 +858,20 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
            true});
     }
 
-    AddHeader("Juego");
+    AddHeader("Game");
 
     if (Available("sh_60fps")) {
-      rows_.push_back({"Parche 60 FPS", [] { return OnOff("sh_60fps"); },
+      rows_.push_back({"60 FPS patch", [] { return OnOff("sh_60fps"); },
                        [](int d) { CycleBool("sh_60fps", d); }, false});
     }
 
     rows_.push_back(
-        {"Desbloquear niveles", [] { return OnOff("sh_unlock_levels"); },
+        {"Unlock levels", [] { return OnOff("sh_unlock_levels"); },
          [](int d) { CycleBool("sh_unlock_levels", d); }, false});
 
     if (Available("sh_unlock_levels_max")) {
       rows_.push_back(
-          {"Nivel maximo",
+          {"Max level",
            [] { return FormatInt("sh_unlock_levels_max"); },
            [](int d) {
              static const std::vector<int32_t> values = {1, 2, 3, 4, 5, 6, 7, 8};
@@ -789,7 +881,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     }
 
     rows_.push_back(
-        {"Idioma",
+        {"Game language",
          [] { return QueryString("sh_language"); },
          [](int d) {
            static const std::vector<std::string> values = {
@@ -798,11 +890,11 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
          },
          true});
 
-    AddHeader("Entrada y audio");
+    AddHeader("Input and audio");
 
     if (Available("input_backend")) {
       rows_.push_back(
-          {"Backend de input",
+          {"Input backend",
            [] { return QueryString("input_backend"); },
            [](int d) {
              static const std::vector<std::string> values = {"sdl", "xinput"};
@@ -813,7 +905,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
 
     if (Available("sh_rumble_timeout_ms")) {
       rows_.push_back(
-          {"Vibracion maxima (ms)",
+          {"Max rumble (ms)",
            [] { return FormatInt("sh_rumble_timeout_ms"); },
            [](int d) {
              static const std::vector<int32_t> values = {0, 2000, 5000, 10000, 30000};
@@ -823,14 +915,14 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
     }
 
     if (Available("audio_mute")) {
-      rows_.push_back({"Silenciar", [] { return OnOff("audio_mute"); },
+      rows_.push_back({"Mute", [] { return OnOff("audio_mute"); },
                        [](int d) { CycleBool("audio_mute", d); }, false});
     }
 
-    AddHeader("Desarrollo");
+    AddHeader("Development");
 
     rows_.push_back(
-        {"Warp nivel (dev)",
+        {"Level warp (dev)",
          [this] {
            static const char* levels[] = {"lvl1_manor_interior", "lvl2_shanty",
                                            "lvl3_manor_catacombs", "lvl4_carnival",
@@ -850,12 +942,13 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
 
     quit_row_ = static_cast<int>(rows_.size());
     rows_.push_back(
-        {"Salir del juego",
+        {"Quit game",
          [this] {
            if (!quit_) {
-             return std::string("no disponible");
+             return std::string(L("unavailable"));
            }
-           return quit_armed_ ? std::string("confirmar (Si/No)") : std::string("pulsar para salir");
+           return quit_armed_ ? std::string(L("confirm (Yes/No)"))
+                             : std::string(L("press to quit"));
          },
          [this](int d) { ChangeQuit(d); },
          false,
@@ -876,6 +969,7 @@ class GraphicsMenuDialog : public rex::ui::ImGuiDialog {
   int preset_index_ = 3;
   int preset_row_ = 1;
   int quit_row_ = 0;
+  int menu_language_row_ = -1;
   int warp_index_ = 0;
   bool dirty_ = false;
   bool quit_armed_ = false;
